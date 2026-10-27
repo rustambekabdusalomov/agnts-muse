@@ -90,3 +90,20 @@ func TestConcurrentAdd(t *testing.T) {
 		t.Fatalf("sum %v total %v", sum, m.Total())
 	}
 }
+
+func TestForecastTracksCachedCalls(t *testing.T) {
+	m := New(nil)
+	if m.Forecast(model.Spark) != 0 {
+		t.Fatal("forecast before any call")
+	}
+	for i, u := range recorded[:len(recorded)-1] {
+		m.Add(model.Spark, u)
+		f := m.Forecast(model.Spark)
+		actual, _ := model.Default.Cost(model.Spark, recorded[i+1])
+		// The forecast must not be below the real next call (it decides
+		// whether to stop) and not wildly above it (it would stop early).
+		if f < actual.Ceil() || f > 3*actual.Ceil() {
+			t.Errorf("after call %d: forecast %v, actual next %v", i+1, f, actual.Ceil())
+		}
+	}
+}

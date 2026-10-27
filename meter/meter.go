@@ -38,6 +38,8 @@ type Meter struct {
 	byModel   map[model.ID]model.Usage
 	calls     int
 	estimated bool
+	last      model.Usage // the latest call, for Forecast
+	prevInput int64       // input of the call before the latest
 }
 
 // New returns a Meter pricing with cat (model.Default when nil).
@@ -60,7 +62,30 @@ func (m *Meter) Add(id model.ID, u model.Usage) Charge {
 	m.byModel[id] = m.byModel[id].Add(u)
 	m.calls++
 	m.estimated = m.estimated || est
+	m.prevInput, m.last = m.last.Input, u
 	return Charge{Model: id, Usage: u, Cost: m.total - prev, Total: m.total, Calls: m.calls, Estimated: m.estimated}
+}
+
+// Forecast estimates the next model call on id, for deciding whether a run
+// can afford it. An agent's calls resend the whole conversation, and Muse
+// caches it: the next call reads the last call's input from cache, adds
+// what the conversation grew by since (tool output and the reply), and
+// writes about as much as calls have on average. Growth is the last
+// increase in input, doubled for margin; before there are two calls it is
+// estimated from the reply. Zero before the first call.
+func (m *Meter) Forecast(id model.ID) money.USD {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.calls == 0 {
+		return 0
+	}
+	growth := 2 * m.last.Output
+	if m.prevInput > 0 {
+		growth = 2 * max(m.last.Input-m.prevInput, 0)
+	}
+	next := model.Usage{Input: m.last.Input + growth, Cached: m.last.Input, Output: m.usage.Output / int64(m.calls)}
+	cost, _ := m.cat.Cost(id, next)
+	return cost.Ceil()
 }
 
 // Total is the rounded-up cost so far.

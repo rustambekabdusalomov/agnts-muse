@@ -124,7 +124,7 @@ func TestMethodNamesExist(t *testing.T) {
 		}
 	}
 	for _, n := range []string{NoteTokenUsage, NoteContextUsage, NoteSessionClosed, NoteTurnStarted, NoteTurnCompleted, NoteTurnRetry,
-		NoteTurnModelRetry, NoteItemStarted, NoteItemDelta, NoteItemCompleted, NoteApprovalRequested, NoteApprovalResolved,
+		NoteTurnModelRetry, NoteItemStarted, NoteItemDelta, NoteItemCompleted, NoteApprovalRequested, NoteApprovalReviewing, NoteApprovalResolved,
 		NoteUsageChanged, NoteModelRouteUnserved, NotificationInitialized} {
 		if _, ok := s.Notifications[n]; !ok && n != NotificationInitialized {
 			t.Errorf("notification %q is not in the schema", n)

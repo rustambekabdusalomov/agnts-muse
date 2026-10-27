@@ -50,6 +50,7 @@ const (
 	NoteItemDelta          = "item/delta"
 	NoteItemCompleted      = "item/completed"
 	NoteApprovalRequested  = "approval/requested"
+	NoteApprovalReviewing  = "approval/reviewing"
 	NoteApprovalResolved   = "approval/resolved"
 	NoteUsageChanged       = "usage/changed"
 	NoteModelRouteUnserved = "session/modelRouteUnserved"
