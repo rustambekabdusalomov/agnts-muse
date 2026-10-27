@@ -63,6 +63,14 @@ func TestReadOnly(t *testing.T) {
 		{Request{Kind: "shell", Command: "git checkout -b x"}, false},
 		{Request{Kind: "shell", Argv: [][]string{{"ls", "-la"}, {"head", "-5"}}}, true},
 		{Request{Kind: "shell", Argv: [][]string{{"ls"}, {"rm", "x"}}}, false},
+		// Quoted | and ; are data, not pipes (refused before: MKSTUDY-13).
+		{Request{Kind: "shell", Command: `grep -rn "ArchiveHooks\|func.*IsOpen\|CheckHours" backend/internal/core/ 2>/dev/null | head -n 30; echo ===; grep -n "ical\|register" docs/adr/0010.md | head -n 20`}, true},
+		{Request{Kind: "shell", Command: `sed -n '645,655p' designs/a.html; echo ===; grep -n "lesson moved\|substitute" plans/12-Notifications\ and\ messaging.md | head -n 12`}, true},
+		{Request{Kind: "shell", Command: `grep -n -i "academic\|group" plans/6-Attendance.md plans/7-CRM*.md 2>&1 | head -60`}, true},
+		{Request{Kind: "shell", Command: `echo "a; rm -rf /"`}, true},
+		{Request{Kind: "shell", Command: `echo "$(rm -rf /)"`}, false},
+		{Request{Kind: "shell", Command: `cat x > "out file"`}, false},
+		{Request{Kind: "shell", Command: `grep -n 'unclosed`}, false},
 		{Request{Kind: "shell", Command: "go test ./..."}, false},
 		{Request{Kind: "network", Host: "example.com"}, false},
 	} {
@@ -118,4 +126,19 @@ func TestReadOnlyExcept(t *testing.T) {
 			t.Errorf("%q: allow %v, want %v (%s)", tc.req.Command+tc.req.Path, v.Allow, tc.allow, v.Reason)
 		}
 	}
+}
+
+func TestParseShell(t *testing.T) {
+	sc, ok := parseShell("mkdir -p /agnts/out && cat > /agnts/out/a.json <<'EOF'\n{\"a\": \"x | y; z\"}\nEOF\necho done 2>&1 | head")
+	if !ok || len(sc.stages) != 4 || sc.stages[1][0] != "cat" || sc.stages[2][0] != "echo" || len(sc.outputs) != 2 || sc.outputs[0] != "/agnts/out/a.json" || sc.outputs[1] != "&1" {
+		t.Fatalf("parse = %+v, %v", sc, ok)
+	}
+}
+
+func FuzzParseShell(f *testing.F) {
+	for _, s := range []string{`grep "a\|b" x | head`, "cat <<EOF\nx\nEOF", `echo 'a;b' && ls > /dev/null`, `a \
+b`, `"`, "2>&1", "<<"} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, s string) { parseShell(s) })
 }

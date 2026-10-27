@@ -171,29 +171,16 @@ func ReadOnlyExcept(dirs ...string) Policy {
 // whose targets are there. Interpreters (python, node, …) are refused:
 // what they write cannot be checked.
 func writesOnlyInside(r Request, inside func(string) bool) bool {
-	cmd := r.Command
-	if strings.Contains(cmd, "`") || strings.Contains(cmd, "$(") || strings.Contains(cmd, "<(") {
+	sc, ok := parseShell(r.Command)
+	if !ok || len(sc.stages) == 0 {
 		return false
 	}
-	body := cmd
-	if i := strings.Index(cmd, "<<"); i >= 0 {
-		body = cmd[:i] // a heredoc's text is data, not commands
-		if nl := strings.Index(cmd[i:], "\n"); nl >= 0 {
-			if end := strings.LastIndex(cmd, "\n"); end > i+nl {
-				body += " " + heredocTail(cmd[i+nl+1:])
-			}
-		}
-	}
-	for _, m := range redirect.FindAllStringSubmatch(body, -1) {
-		if t := m[1]; t != "/dev/null" && !strings.HasPrefix(t, "&") && !inside(t) {
+	for _, t := range sc.outputs {
+		if t != "/dev/null" && !strings.HasPrefix(t, "&") && !inside(t) {
 			return false
 		}
 	}
-	for _, part := range separator.Split(redirect.ReplaceAllString(body, " "), -1) {
-		f := strings.Fields(part)
-		if len(f) == 0 || f[0] == "EOF" || strings.HasPrefix(f[0], "<<") {
-			continue
-		}
+	for _, f := range sc.stages {
 		switch path.Base(f[0]) {
 		case "mkdir", "touch", "tee":
 			for _, a := range f[1:] {
@@ -214,38 +201,23 @@ func writesOnlyInside(r Request, inside func(string) bool) bool {
 	return true
 }
 
-// heredocTail is what follows a heredoc's terminator line (more commands).
-func heredocTail(rest string) string {
-	lines := strings.Split(rest, "\n")
-	for i, l := range lines {
-		if t := strings.TrimSpace(l); t == "EOF" || strings.HasSuffix(t, "_EOF") || t == "JSON" || t == "PY" {
-			return strings.Join(lines[i+1:], "\n")
-		}
-	}
-	return ""
-}
-
 // readOnlyShell reports whether every stage of a shell command only reads:
 // pipelines and sequences (|, ;, &&, ||) of inspection commands, with
 // output redirected nowhere but /dev/null. Refusing `ls -R | head` would
 // only make the model spend calls working around the rule.
 func readOnlyShell(r Request) bool {
-	cmd := strings.TrimSpace(r.Command)
-	if cmd == "" && len(r.Argv) == 0 || strings.Contains(cmd, "`") || strings.Contains(cmd, "$(") || strings.Contains(cmd, "<(") {
-		return false
-	}
-	for _, m := range redirect.FindAllStringSubmatch(cmd, -1) {
-		if t := m[1]; t != "/dev/null" && !strings.HasPrefix(t, "&") {
+	stages := r.Argv
+	if cmd := strings.TrimSpace(r.Command); cmd != "" {
+		sc, ok := parseShell(cmd)
+		if !ok {
 			return false
 		}
-	}
-	stages := r.Argv
-	if len(stages) == 0 {
-		for _, part := range separator.Split(redirect.ReplaceAllString(cmd, " "), -1) {
-			if f := strings.Fields(part); len(f) > 0 {
-				stages = append(stages, f)
+		for _, t := range sc.outputs {
+			if t != "/dev/null" && !strings.HasPrefix(t, "&") {
+				return false
 			}
 		}
+		stages = sc.stages
 	}
 	if len(stages) == 0 {
 		return false
@@ -259,8 +231,6 @@ func readOnlyShell(r Request) bool {
 }
 
 var (
-	redirect  = regexp.MustCompile(`[0-9]*>>?\s*(&[0-9-]|[^\s;|&]+)`)
-	separator = regexp.MustCompile(`\|\||&&|[|;]`)
 	// readOnlyBins only read (find and sed are checked for their writing
 	// flags below).
 	readOnlyBins = map[string]bool{"ls": true, "cat": true, "head": true, "tail": true, "wc": true, "find": true, "grep": true,
