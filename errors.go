@@ -27,7 +27,8 @@ var (
 	ErrInvalid = errors.New("muse: invalid request")
 )
 
-// RateLimitError: the account's Muse allowance is used up until Until.
+// RateLimitError reports that the account's Muse allowance is used up
+// until Until.
 type RateLimitError struct {
 	Kind  string // the provider's limit kind
 	Until time.Time

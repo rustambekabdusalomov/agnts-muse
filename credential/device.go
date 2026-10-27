@@ -192,7 +192,7 @@ func (f *DeviceFlow) post(ctx context.Context, path string, form url.Values, out
 	if err != nil {
 		return 0, fmt.Errorf("credential: sign-in service: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // read-only body
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return resp.StatusCode, err

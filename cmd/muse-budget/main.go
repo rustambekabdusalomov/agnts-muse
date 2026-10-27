@@ -55,7 +55,7 @@ func main() {
 	case "quote":
 		err = quoteCmd(ctx, os.Args[2:])
 	case "models":
-		err = models()
+		models()
 	case "login":
 		err = login(ctx)
 	case "-h", "--help", "help":
@@ -243,12 +243,11 @@ func quoteCmd(ctx context.Context, args []string) error {
 	return nil
 }
 
-func models() error {
+func models() {
 	fmt.Printf("%-22s %-7s %10s %10s %10s\n", "model", "tier", "input/M", "cached/M", "output/M")
 	for _, m := range model.Default.Models() {
 		fmt.Printf("%-22s %-7s %10s %10s %10s\n", m.ID, m.Tier, money.USD(m.Price.Input), money.USD(m.Price.Cached), money.USD(m.Price.Output))
 	}
-	return nil
 }
 
 func login(ctx context.Context) error {

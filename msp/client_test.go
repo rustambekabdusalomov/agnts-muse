@@ -265,3 +265,43 @@ func FuzzClientDispatch(f *testing.F) {
 		}
 	})
 }
+
+func BenchmarkDecodeTokenUsage(b *testing.B) {
+	rec, err := msptest.Load("../testdata/msp-session.jsonl")
+	if err != nil {
+		b.Fatal(err)
+	}
+	var n msp.Notification
+	for _, x := range rec {
+		if x.Method == msp.NoteTokenUsage {
+			n = x
+			break
+		}
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := msp.Decode[msp.TokenUsage](n); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkNotificationThroughput measures messages per second through the
+// client: framing, dispatch and the queue.
+func BenchmarkNotificationThroughput(b *testing.B) {
+	rec, _ := msptest.Load("../testdata/msp-session.jsonl")
+	h, conn := msptest.New()
+	c := msp.NewClient(conn)
+	defer c.Close()
+	b.ReportAllocs()
+	go func() {
+		for i := 0; ; i++ {
+			if h.NotifyRaw(rec[i%len(rec)]) != nil {
+				return
+			}
+		}
+	}()
+	for b.Loop() {
+		<-c.Notifications()
+	}
+}

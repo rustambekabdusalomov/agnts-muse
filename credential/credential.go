@@ -32,7 +32,7 @@ const APIKeyPrefix = "LLM_"
 
 // Environment variables Muse Code reads.
 const (
-	EnvAPIKey   = "META_API_KEY"
+	EnvAPIKey   = "META_API_KEY" //nolint:gosec // a variable name, not a credential
 	EnvAuthPath = "MUSE_AUTH_PATH"
 )
 

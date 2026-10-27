@@ -181,7 +181,7 @@ type Recording []msp.Notification
 // lines starting "< " are server messages, "> " client messages.
 // Responses and client lines are skipped.
 func Load(path string) (Recording, error) {
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) //nolint:gosec // test fixtures chosen by the test
 	if err != nil {
 		return nil, err
 	}

@@ -62,7 +62,9 @@ func (l LocalExecutor) Start(ctx context.Context, cmd Command) (Process, error) 
 			return nil, err
 		}
 	}
-	c := exec.Command(cmd.Path, cmd.Args...) //nolint:gosec // the caller chooses the binary
+	// Not CommandContext: cancelling must kill Muse's whole process group
+	// (its tool processes too), which the goroutine below does.
+	c := exec.Command(cmd.Path, cmd.Args...) //nolint:gosec,noctx // the caller chooses the binary
 	c.Dir = cmd.Dir
 	c.Env = cmd.Env
 	if l.InheritEnv {

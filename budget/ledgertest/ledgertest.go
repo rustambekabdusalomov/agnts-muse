@@ -351,7 +351,7 @@ func concurrent(t *testing.T, s budget.Store, _ *Clock) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			rng := rand.New(rand.NewPCG(uint64(i), 7))
+			rng := rand.New(rand.NewPCG(uint64(i), 7)) //nolint:gosec // reproducible test schedule, not security
 			h, err := s.Hold(ctx, budget.HoldRequest{Key: fmt.Sprintf("run-%d", i), Payers: []budget.AccountID{user, ws},
 				Caps: []budget.AccountID{capA}, Amount: money.USD(rng.IntN(4)+1) * money.Cent})
 			if errors.Is(err, budget.ErrInsufficient) {

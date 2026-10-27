@@ -73,7 +73,7 @@ type Request struct {
 	Router  route.Policy
 }
 
-// ErrNoEstimate: Muse did not answer with an estimate.
+// ErrNoEstimate reports that Muse did not answer with an estimate.
 var ErrNoEstimate = errors.New("quote: Muse gave no estimate")
 
 const instructions = `You are estimating, not doing, a coding task. Read only what you need to judge its size; do not change anything.
