@@ -162,7 +162,7 @@ func (r *run) openSession() error {
 	}
 	var s msp.SessionResult
 	err := r.client.Call(r.ctx, msp.MethodSessionStart, msp.SessionStartParams{CommandID: msp.NewCommandID(),
-		WorkspaceRoot: r.req.Workdir, ModelID: string(r.model), ApprovalMode: r.e.cfg.ApprovalMode}, &s)
+		WorkspaceRoot: r.req.Workdir, WorkspaceRoots: r.roots(), ModelID: string(r.model), ApprovalMode: r.e.cfg.ApprovalMode}, &s)
 	if err != nil {
 		return fmt.Errorf("muse: start session: %w", err)
 	}
@@ -610,4 +610,13 @@ func firstNonEmpty(s ...string) string {
 		}
 	}
 	return ""
+}
+
+// roots is the session's workspace roots: Workdir first, then ExtraRoots
+// (nil without extras, so Muse uses Workdir alone).
+func (r *run) roots() []string {
+	if len(r.req.ExtraRoots) == 0 {
+		return nil
+	}
+	return append([]string{r.req.Workdir}, r.req.ExtraRoots...)
 }

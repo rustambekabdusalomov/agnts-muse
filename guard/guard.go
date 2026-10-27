@@ -130,6 +130,101 @@ var ReadOnly = Func(func(r Request) Verdict {
 		"pipes and ; are fine); do not change files or redirect output into them"}
 })
 
+// ReadOnlyExcept is ReadOnly that may also write inside dirs: a run that
+// must not change the code but hands its result back in a file (agnts's
+// analysis writes /agnts/out/analysis.json). File tools may write there;
+// shell commands may create the directory, copy or tee into it and
+// redirect into it, as long as every other stage only reads.
+func ReadOnlyExcept(dirs ...string) Policy {
+	inside := func(p string) bool {
+		p = path.Clean(strings.Trim(p, `"'`))
+		for _, d := range dirs {
+			d = path.Clean(d)
+			if p == d || strings.HasPrefix(p, d+"/") {
+				return true
+			}
+		}
+		return false
+	}
+	return Func(func(r Request) Verdict {
+		if v := ReadOnly.Decide(r); v.Allow {
+			return v
+		}
+		allow := Verdict{Allow: true, Rule: "read-only-except"}
+		switch r.Kind {
+		case "file":
+			if r.Path != "" && inside(r.Path) {
+				return allow
+			}
+		case "shell":
+			if writesOnlyInside(r, inside) {
+				return allow
+			}
+		}
+		return Verdict{Allow: false, Rule: "read-only", Reason: "this run is read-only except " + strings.Join(dirs, ", ") +
+			": inspect the code with read-only commands and write only your result there (e.g. cat > " + path.Join(dirs[0], "result.json") + " <<'EOF' … EOF)"}
+	})
+}
+
+// writesOnlyInside reports whether a shell command reads, and writes only
+// into allowed dirs: redirects there or to /dev/null, mkdir/cp/tee/touch
+// whose targets are there. Interpreters (python, node, …) are refused:
+// what they write cannot be checked.
+func writesOnlyInside(r Request, inside func(string) bool) bool {
+	cmd := r.Command
+	if strings.Contains(cmd, "`") || strings.Contains(cmd, "$(") || strings.Contains(cmd, "<(") {
+		return false
+	}
+	body := cmd
+	if i := strings.Index(cmd, "<<"); i >= 0 {
+		body = cmd[:i] // a heredoc's text is data, not commands
+		if nl := strings.Index(cmd[i:], "\n"); nl >= 0 {
+			if end := strings.LastIndex(cmd, "\n"); end > i+nl {
+				body += " " + heredocTail(cmd[i+nl+1:])
+			}
+		}
+	}
+	for _, m := range redirect.FindAllStringSubmatch(body, -1) {
+		if t := m[1]; t != "/dev/null" && !strings.HasPrefix(t, "&") && !inside(t) {
+			return false
+		}
+	}
+	for _, part := range separator.Split(redirect.ReplaceAllString(body, " "), -1) {
+		f := strings.Fields(part)
+		if len(f) == 0 || f[0] == "EOF" || strings.HasPrefix(f[0], "<<") {
+			continue
+		}
+		switch path.Base(f[0]) {
+		case "mkdir", "touch", "tee":
+			for _, a := range f[1:] {
+				if !strings.HasPrefix(a, "-") && !inside(a) {
+					return false
+				}
+			}
+		case "cp", "mv":
+			if len(f) < 3 || !inside(f[len(f)-1]) {
+				return false
+			}
+		default:
+			if !readOnlyStage(f) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// heredocTail is what follows a heredoc's terminator line (more commands).
+func heredocTail(rest string) string {
+	lines := strings.Split(rest, "\n")
+	for i, l := range lines {
+		if t := strings.TrimSpace(l); t == "EOF" || strings.HasSuffix(t, "_EOF") || t == "JSON" || t == "PY" {
+			return strings.Join(lines[i+1:], "\n")
+		}
+	}
+	return ""
+}
+
 // readOnlyShell reports whether every stage of a shell command only reads:
 // pipelines and sequences (|, ;, &&, ||) of inspection commands, with
 // output redirected nowhere but /dev/null. Refusing `ls -R | head` would

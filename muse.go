@@ -165,6 +165,9 @@ type Request struct {
 	// Guard and Router override the Engine's for this run.
 	Guard  guard.Policy
 	Router route.Policy
+	// ExtraRoots are more directories Muse's file tools may use besides
+	// Workdir, such as where the caller reads results back from.
+	ExtraRoots []string
 	// MaxCalls caps the run's model calls (0: no cap). Muse is told to
 	// wrap up at Config.SteerAt of it and stopped at it (ErrStepLimit).
 	MaxCalls int

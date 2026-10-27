@@ -142,12 +142,13 @@ const (
 
 // SessionStartParams creates a session.
 type SessionStartParams struct {
-	CommandID         string `json:"commandId"`
-	WorkspaceRoot     string `json:"workspaceRoot,omitempty"`
-	ModelID           string `json:"modelId,omitempty"`
-	ApprovalMode      string `json:"approvalMode,omitempty"`
-	PermissionProfile string `json:"permissionProfile,omitempty"`
-	SessionID         string `json:"sessionId,omitempty"`
+	CommandID         string   `json:"commandId"`
+	WorkspaceRoot     string   `json:"workspaceRoot,omitempty"`
+	WorkspaceRoots    []string `json:"workspaceRoots,omitempty"`
+	ModelID           string   `json:"modelId,omitempty"`
+	ApprovalMode      string   `json:"approvalMode,omitempty"`
+	PermissionProfile string   `json:"permissionProfile,omitempty"`
+	SessionID         string   `json:"sessionId,omitempty"`
 }
 
 // SessionResumeParams loads a stored session.

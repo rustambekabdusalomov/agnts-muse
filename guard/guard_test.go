@@ -94,3 +94,28 @@ func TestHostRule(t *testing.T) {
 		t.Fatal("other host denied")
 	}
 }
+
+func TestReadOnlyExcept(t *testing.T) {
+	p := ReadOnlyExcept("/agnts/out")
+	for _, tc := range []struct {
+		req   Request
+		allow bool
+	}{
+		{Request{Kind: "shell", Command: "ls -la"}, true},
+		{Request{Kind: "file", Tool: "write_file", Path: "/agnts/out/analysis.json"}, true},
+		{Request{Kind: "file", Tool: "write_file", Path: "/workspace/main.go"}, false},
+		{Request{Kind: "file", Tool: "write_file", Path: "/agnts/out/../workspace/x"}, false},
+		// What real analyses asked for and were refused.
+		{Request{Kind: "shell", Command: "mkdir -p /agnts/out && cat > /agnts/out/analysis.json <<'EOF'\n{\"kind\":\"x\"}\nEOF\necho written"}, true},
+		{Request{Kind: "shell", Command: "cp /tmp/agnts-analysis.json /agnts/out/analysis.json && cat /agnts/out/analysis.json | head -c 200"}, true},
+		{Request{Kind: "shell", Command: "mkdir -p /agnts/out && python3 - <<'PY'\nimport json\nPY"}, false},
+		{Request{Kind: "shell", Command: "cat > /workspace/main.go <<'EOF'\nx\nEOF"}, false},
+		{Request{Kind: "shell", Command: "cp a.go /workspace/b.go"}, false},
+		{Request{Kind: "shell", Command: "echo hi | tee /agnts/out/x.txt"}, true},
+		{Request{Kind: "shell", Command: "echo hi | tee /etc/x"}, false},
+	} {
+		if v := p.Decide(tc.req); v.Allow != tc.allow {
+			t.Errorf("%q: allow %v, want %v (%s)", tc.req.Command+tc.req.Path, v.Allow, tc.allow, v.Reason)
+		}
+	}
+}
