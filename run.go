@@ -308,7 +308,23 @@ func (r *run) onUsage(u msp.TokenUsage) {
 	if r.hold != nil {
 		r.enforce(c.Total)
 	}
+	r.limitCalls(c.Calls)
 	r.route()
+}
+
+// limitCalls steers the run at SteerAt of its MaxCalls and stops it there.
+func (r *run) limitCalls(calls int) {
+	maxCalls := r.req.MaxCalls
+	if maxCalls <= 0 || r.stopped != StopNone {
+		return
+	}
+	switch {
+	case calls >= maxCalls:
+		r.stop(StopSteps, ErrStepLimit, fmt.Sprintf("reached the cap of %d model calls", maxCalls))
+	case !r.steered && float64(calls) >= r.e.cfg.SteerAt*float64(maxCalls):
+		r.steerWith(fmt.Sprintf("[Step notice] You have used %d of the %d model calls this task may take. "+
+			"Stop exploring: finish with what you have and give your answer now, in the format asked for.", calls, maxCalls), "steps")
+	}
 }
 
 // extend keeps the hold Step ahead of spent; when the ledger refuses,
@@ -356,16 +372,21 @@ func (r *run) steer(spent money.USD) {
 	if l := r.req.Budget.Limit; l > 0 && l-spent < left {
 		left = l - spent
 	}
-	msg := fmt.Sprintf("[Budget notice] %v of this task's budget is used and about %v is left. "+
+	r.steerWith(fmt.Sprintf("[Budget notice] %v of this task's budget is used and about %v is left. "+
 		"Finish the change you are making, run the single most relevant check, and reply with a short summary. Do not start new exploration.",
-		spent, left)
+		spent, left), "budget")
+}
+
+// steerWith sends msg into the running turn.
+func (r *run) steerWith(msg, reason string) {
+	r.steered = true
 	err := r.client.Call(context.WithoutCancel(r.ctx), msp.MethodTurnSteer, msp.TurnSteerParams{CommandID: msp.NewCommandID(),
 		SessionID: r.sessionID, ExpectedTurnID: r.turnID, Input: []msp.InputPart{msp.Text(msg)}}, nil)
 	if err != nil {
 		r.emit(Event{Kind: EventWarning, Reason: "steer: " + err.Error()})
 		return
 	}
-	r.emit(Event{Kind: EventSteer, Text: msg, Reason: "budget"})
+	r.emit(Event{Kind: EventSteer, Text: msg, Reason: reason})
 }
 
 // stop interrupts the turn once.
@@ -478,7 +499,7 @@ func pickChoice(choices []msp.ApprovalChoice, allow bool) (msp.ApprovalChoice, b
 
 // stopError is the error for a run stopped on purpose.
 func (r *run) stopError() error {
-	if r.stopped == StopContext {
+	if r.stopped == StopContext || r.stopped == StopSteps {
 		return r.stopErr
 	}
 	snap := r.meter.Snapshot()

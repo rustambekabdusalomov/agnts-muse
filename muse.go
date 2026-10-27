@@ -165,6 +165,9 @@ type Request struct {
 	// Guard and Router override the Engine's for this run.
 	Guard  guard.Policy
 	Router route.Policy
+	// MaxCalls caps the run's model calls (0: no cap). Muse is told to
+	// wrap up at Config.SteerAt of it and stopped at it (ErrStepLimit).
+	MaxCalls int
 }
 
 func (r Request) validate(hasLedger bool) error {
@@ -190,6 +193,7 @@ const (
 	StopBudget   StopReason = "budget"    // the payers or a cap ran out
 	StopRunLimit StopReason = "run_limit" // the run's own limit
 	StopContext  StopReason = "context"   // the caller cancelled
+	StopSteps    StopReason = "steps"     // the run's MaxCalls
 )
 
 // Result is what a run did.

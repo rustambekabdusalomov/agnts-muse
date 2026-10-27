@@ -542,3 +542,30 @@ func TestManyRunsShareOneBudget(t *testing.T) {
 	}
 	t.Logf("8 runs on a 10¢ budget: charged %v, unbilled %v, left %v", money.USD(charged.Load()), money.USD(unbilled.Load()), b.Total)
 }
+
+func TestMaxCallsSteersThenStops(t *testing.T) {
+	s := &scripted{}
+	s.notes = []func(*msptest.Host){
+		usage(model.Spark, 1000, 10), usage(model.Spark, 1000, 10), usage(model.Spark, 1000, 10),
+		usage(model.Spark, 1000, 10), usage(model.Spark, 1000, 10), usage(model.Spark, 1000, 10),
+		func(h *msptest.Host) {
+			if _, err := h.WaitFor(context.Background(), msp.MethodTurnInterrupt); err == nil {
+				_ = h.Notify(msp.NoteTurnCompleted, msp.TurnCompleted{SessionID: "s", TurnID: "t", Terminal: msp.TerminalCancelled})
+			}
+		},
+	}
+	on, events := collect()
+	res, err := muse.New(muse.Config{}).Run(ctxT(t), muse.Request{Prompt: "p", MaxCalls: 5}, s, on)
+	if !errors.Is(err, muse.ErrStepLimit) || res.Stopped != muse.StopSteps || !res.Steered {
+		t.Fatalf("err = %v, result %+v", err, res)
+	}
+	var steer string
+	for _, e := range events() {
+		if e.Kind == muse.EventSteer {
+			steer = e.Reason
+		}
+	}
+	if steer != "steps" || len(s.host.Sent(msp.MethodTurnInterrupt)) != 1 || len(s.host.Sent(msp.MethodTurnSteer)) != 1 {
+		t.Fatalf("steer %q, interrupts %d", steer, len(s.host.Sent(msp.MethodTurnInterrupt)))
+	}
+}

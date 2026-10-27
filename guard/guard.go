@@ -122,14 +122,100 @@ var ReadOnly = Func(func(r Request) Verdict {
 			return Verdict{Allow: true, Rule: "read-only"}
 		}
 	case "shell":
-		if readOnlyCmd.MatchString(strings.TrimSpace(r.Command)) && !strings.ContainsAny(r.Command, ">;&|`$") {
+		if readOnlyShell(r) {
 			return Verdict{Allow: true, Rule: "read-only"}
 		}
 	}
-	return Verdict{Allow: false, Rule: "read-only", Reason: "this run is read-only: inspect the code, do not change it or run commands that do"}
+	return Verdict{Allow: false, Rule: "read-only", Reason: "this run is read-only: inspect the code with read-only commands (ls, cat, grep, find, git log …, " +
+		"pipes and ; are fine); do not change files or redirect output into them"}
 })
 
-var readOnlyCmd = regexp.MustCompile(`^(ls|cat|head|tail|wc|find|grep|rg|git (log|show|diff|status|blame))(\s|$)`)
+// readOnlyShell reports whether every stage of a shell command only reads:
+// pipelines and sequences (|, ;, &&, ||) of inspection commands, with
+// output redirected nowhere but /dev/null. Refusing `ls -R | head` would
+// only make the model spend calls working around the rule.
+func readOnlyShell(r Request) bool {
+	cmd := strings.TrimSpace(r.Command)
+	if cmd == "" && len(r.Argv) == 0 || strings.Contains(cmd, "`") || strings.Contains(cmd, "$(") || strings.Contains(cmd, "<(") {
+		return false
+	}
+	for _, m := range redirect.FindAllStringSubmatch(cmd, -1) {
+		if t := m[1]; t != "/dev/null" && !strings.HasPrefix(t, "&") {
+			return false
+		}
+	}
+	stages := r.Argv
+	if len(stages) == 0 {
+		for _, part := range separator.Split(redirect.ReplaceAllString(cmd, " "), -1) {
+			if f := strings.Fields(part); len(f) > 0 {
+				stages = append(stages, f)
+			}
+		}
+	}
+	if len(stages) == 0 {
+		return false
+	}
+	for _, st := range stages {
+		if !readOnlyStage(st) {
+			return false
+		}
+	}
+	return true
+}
+
+var (
+	redirect  = regexp.MustCompile(`[0-9]*>>?\s*(&[0-9-]|[^\s;|&]+)`)
+	separator = regexp.MustCompile(`\|\||&&|[|;]`)
+	// readOnlyBins only read (find and sed are checked for their writing
+	// flags below).
+	readOnlyBins = map[string]bool{"ls": true, "cat": true, "head": true, "tail": true, "wc": true, "find": true, "grep": true,
+		"egrep": true, "rg": true, "tree": true, "file": true, "stat": true, "echo": true, "printf": true, "pwd": true, "sort": true,
+		"uniq": true, "cut": true, "tr": true, "jq": true, "sed": true, "awk": true, "basename": true, "dirname": true, "realpath": true,
+		"du": true, "diff": true, "true": true, "test": true, "[": true, "nl": true, "column": true, "fd": true}
+	readOnlyGit = map[string]bool{"log": true, "show": true, "diff": true, "status": true, "blame": true, "ls-files": true,
+		"grep": true, "branch": true, "rev-parse": true, "shortlog": true, "describe": true, "ls-tree": true, "cat-file": true}
+)
+
+func readOnlyStage(argv []string) bool {
+	for len(argv) > 0 && strings.Contains(argv[0], "=") && !strings.HasPrefix(argv[0], "-") {
+		argv = argv[1:] // VAR=value prefixes
+	}
+	if len(argv) == 0 {
+		return true
+	}
+	name := path.Base(argv[0])
+	switch name {
+	case "git":
+		sub := ""
+		for _, a := range argv[1:] {
+			if !strings.HasPrefix(a, "-") {
+				sub = a
+				break
+			}
+		}
+		return readOnlyGit[sub]
+	case "find":
+		for _, a := range argv[1:] {
+			switch a {
+			case "-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls":
+				return false
+			}
+		}
+	case "sed":
+		for _, a := range argv[1:] {
+			if a == "-i" || strings.HasPrefix(a, "-i") || strings.HasPrefix(a, "--in-place") {
+				return false
+			}
+		}
+	case "awk":
+		for _, a := range argv[1:] {
+			if strings.Contains(a, "system(") || strings.Contains(a, "print >") || strings.Contains(a, "printf >") {
+				return false
+			}
+		}
+	}
+	return readOnlyBins[name]
+}
 
 // Defaults are the rules agnts applies to every coding run. They mirror
 // agnts-guard's hooks for Claude Code: the server pushes, never the agent;

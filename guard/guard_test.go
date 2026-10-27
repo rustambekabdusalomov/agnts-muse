@@ -51,6 +51,18 @@ func TestReadOnly(t *testing.T) {
 		{Request{Kind: "shell", Command: "git log --oneline -5"}, true},
 		{Request{Kind: "shell", Command: "ls -la"}, true},
 		{Request{Kind: "shell", Command: "ls > out.txt"}, false},
+		// What a real analysis asked for and was wrongly refused.
+		{Request{Kind: "shell", Command: `ls -R plans 2>/dev/null | head -n 100; echo "---"; ls /workspace/*.md 2>/dev/null`}, true},
+		{Request{Kind: "shell", Command: "git log --oneline -20 && git status"}, true},
+		{Request{Kind: "shell", Command: "find . -name '*.go' | xargs wc -l"}, false},
+		{Request{Kind: "shell", Command: "find . -name '*.tmp' -delete"}, false},
+		{Request{Kind: "shell", Command: "sed -i s/a/b/ main.go"}, false},
+		{Request{Kind: "shell", Command: "sed -n 1,40p main.go 2>&1"}, true},
+		{Request{Kind: "shell", Command: "cat main.go >> notes.md"}, false},
+		{Request{Kind: "shell", Command: "echo $(rm -rf /)"}, false},
+		{Request{Kind: "shell", Command: "git checkout -b x"}, false},
+		{Request{Kind: "shell", Argv: [][]string{{"ls", "-la"}, {"head", "-5"}}}, true},
+		{Request{Kind: "shell", Argv: [][]string{{"ls"}, {"rm", "x"}}}, false},
 		{Request{Kind: "shell", Command: "go test ./..."}, false},
 		{Request{Kind: "network", Host: "example.com"}, false},
 	} {
