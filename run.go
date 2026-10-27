@@ -302,17 +302,18 @@ func (r *run) onUsage(u msp.TokenUsage) {
 		Output: u.Usage.OutputTokens, Reasoning: u.Usage.ReasoningTokens})
 	r.nextCall = r.meter.Forecast(r.model)
 	if r.hold != nil {
-		r.enforce(c.Total)
+		r.extend(c.Total)
 	}
 	r.emit(Event{Kind: EventUsage, Charge: &c, Held: r.held, Model: id})
+	if r.hold != nil {
+		r.enforce(c.Total)
+	}
 	r.route()
 }
 
-// enforce keeps the hold Step ahead of spent, and steers or stops the run
-// when it cannot be. A run is stopped when it could not afford the next
-// call as the meter forecasts it, so it ends inside its budget rather
-// than one call past it.
-func (r *run) enforce(spent money.USD) {
+// extend keeps the hold Step ahead of spent; when the ledger refuses,
+// the run is marked low on funds for enforce.
+func (r *run) extend(spent money.USD) {
 	b := r.req.Budget
 	target := spent + r.e.cfg.Step
 	if b.Limit > 0 {
@@ -330,6 +331,13 @@ func (r *run) enforce(spent money.USD) {
 			r.fundsLow, r.fundsErr = true, err
 		}
 	}
+}
+
+// enforce steers or stops the run. A run is stopped when it could not
+// afford the next call as the meter forecasts it, so it ends inside its
+// budget rather than one call past it.
+func (r *run) enforce(spent money.USD) {
+	b := r.req.Budget
 	next := spent + r.nextCall
 	switch {
 	case b.Limit > 0 && next > b.Limit:
