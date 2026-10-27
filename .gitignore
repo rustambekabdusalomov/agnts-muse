@@ -1,0 +1,4 @@
+/muse-budget
+/coverage.out
+*.test
+testdata/fuzz/
