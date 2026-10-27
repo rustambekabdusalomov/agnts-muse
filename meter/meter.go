@@ -7,6 +7,7 @@
 package meter
 
 import (
+	"maps"
 	"sync"
 
 	"github.com/rustambekabdusalomov/agnts-muse/model"
@@ -108,9 +109,5 @@ type Snapshot struct {
 func (m *Meter) Snapshot() Snapshot {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	by := make(map[model.ID]model.Usage, len(m.byModel))
-	for k, v := range m.byModel {
-		by[k] = v
-	}
-	return Snapshot{Total: m.total, Usage: m.usage, ByModel: by, Calls: m.calls, Estimated: m.estimated}
+	return Snapshot{Total: m.total, Usage: m.usage, ByModel: maps.Clone(m.byModel), Calls: m.calls, Estimated: m.estimated}
 }
