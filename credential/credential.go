@@ -48,8 +48,11 @@ type Credential struct {
 	Kind Kind
 	// APIKey is set for KindAPIKey.
 	APIKey string
-	// Token is set for KindLogin.
+	// Token is set for KindLogin made from a token (Login).
 	Token *Token
+	// File is set for KindLogin taken as Muse Code saved it (LoginFile):
+	// its credential file, passed to Muse unchanged.
+	File []byte
 	// Label names the account for people ("rustam@example.com").
 	Label string
 }
@@ -84,9 +87,41 @@ func Login(t Token, label string) (Credential, error) {
 	return Credential{Kind: KindLogin, Token: &t, Label: label}, nil
 }
 
+// LoginFile is a login as Muse Code itself saved it after `muse login`:
+// its credential file, kept byte for byte, so nothing about its format is
+// assumed. It must be a JSON object with a Meta provider entry.
+func LoginFile(data []byte, label string) (Credential, error) {
+	var f struct {
+		Providers map[string]json.RawMessage `json:"providers"`
+	}
+	if err := json.Unmarshal(data, &f); err != nil || len(f.Providers["meta"]) == 0 {
+		return Credential{}, fmt.Errorf("%w: not a Muse Code credential file with a Meta login", ErrInvalid)
+	}
+	return Credential{Kind: KindLogin, File: append([]byte(nil), data...), Label: label}, nil
+}
+
+// fileSecrets are the long string values of a credential file's Meta
+// entry (tokens), for redaction; URLs and short labels are left out.
+func fileSecrets(data []byte) []string {
+	var f struct {
+		Providers map[string]map[string]any `json:"providers"`
+	}
+	if json.Unmarshal(data, &f) != nil {
+		return nil
+	}
+	var out []string
+	for _, v := range f.Providers["meta"] {
+		if s, ok := v.(string); ok && len(s) >= 20 && !strings.HasPrefix(s, "http") {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // Secrets returns every secret string in c, for redaction.
 func (c Credential) Secrets() []string {
 	var s []string
+	s = append(s, fileSecrets(c.File)...)
 	if c.APIKey != "" {
 		s = append(s, c.APIKey)
 	}
@@ -154,8 +189,12 @@ type authProvider struct {
 	ExpiresAt   int64  `json:"expires_at,omitempty"`
 }
 
-// AuthFile renders a login as Muse Code's credential file.
+// AuthFile renders a login as Muse Code's credential file (the file
+// itself for a LoginFile).
 func (c Credential) AuthFile() ([]byte, error) {
+	if c.Kind == KindLogin && c.File != nil {
+		return append([]byte(nil), c.File...), nil
+	}
 	if c.Kind != KindLogin || c.Token == nil {
 		return nil, fmt.Errorf("%w: only a login has a credential file", ErrInvalid)
 	}

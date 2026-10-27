@@ -203,3 +203,23 @@ func TestDeviceFlowRejectsInsecurePage(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestLoginFileIsKeptAsIs(t *testing.T) {
+	raw := []byte(`{"schema_version":1,"providers":{"meta":{"mechanism":"oauth","storage":"file","api_base_url":"https://api.meta.ai/v1","novel_field":"x","access_token":"tok-0123456789abcdefghij"}}}`)
+	c, err := LoginFile(raw, "dev@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, files, err := c.Setup("/h/.config/muse/auth.json")
+	if err != nil || string(files[0].Data) != string(raw) {
+		t.Fatalf("file changed: %s, %v", files[0].Data, err)
+	}
+	if s := c.Secrets(); len(s) != 1 || s[0] != "tok-0123456789abcdefghij" {
+		t.Fatalf("secrets = %v", s)
+	}
+	for _, bad := range []string{"", "{}", `{"providers":{}}`, "not json"} {
+		if _, err := LoginFile([]byte(bad), ""); err == nil {
+			t.Errorf("LoginFile(%q) accepted", bad)
+		}
+	}
+}
