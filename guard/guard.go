@@ -28,11 +28,19 @@ type Request struct {
 // Verdict is a policy's answer.
 type Verdict struct {
 	Allow bool
-	// Reason is shown to the model when the call is denied, and logged.
+	// Ask leaves the call to a person (Allow is false until they allow
+	// it). The run asks one when it can, and denies the call when it
+	// cannot.
+	Ask bool
+	// Reason is shown to the model when the call is denied, to the person
+	// when they are asked, and logged.
 	Reason string
 	// Rule names the rule that decided, for audit logs.
 	Rule string
 }
+
+// denies reports whether v refuses the call outright.
+func (v Verdict) denies() bool { return !v.Allow && !v.Ask }
 
 // Policy decides approvals.
 type Policy interface {
@@ -45,9 +53,11 @@ type Func func(Request) Verdict
 // Decide implements Policy.
 func (f Func) Decide(r Request) Verdict { return f(r) }
 
-// Rule denies a matching tool call.
+// Rule denies a matching tool call, or asks a person about it.
 type Rule struct {
 	Name string
+	// Ask asks a person about a match instead of denying it.
+	Ask bool
 	// Command matches a shell command (the whole line and every stage).
 	Command *regexp.Regexp
 	// Path matches a file path with path.Match, against the full path and
@@ -86,29 +96,50 @@ func (r Rule) matches(req Request) bool {
 	return false
 }
 
-// Rules denies a call when any rule matches and allows everything else.
+// Rules denies a call when a deny rule matches, asks a person when only an
+// ask rule does, and allows everything else.
 type Rules []Rule
 
 // Decide implements Policy.
 func (rs Rules) Decide(req Request) Verdict {
-	for _, r := range rs {
-		if r.matches(req) {
+	var ask *Rule
+	for i, r := range rs {
+		if !r.matches(req) {
+			continue
+		}
+		if !r.Ask {
 			return Verdict{Allow: false, Reason: r.Reason, Rule: r.Name}
 		}
+		if ask == nil {
+			ask = &rs[i]
+		}
+	}
+	if ask != nil {
+		return Verdict{Ask: true, Reason: ask.Reason, Rule: ask.Name}
 	}
 	return Verdict{Allow: true, Rule: "default-allow"}
 }
 
-// Chain asks each policy in turn; the first denial wins.
+// Chain asks each policy in turn: the first denial wins, then the first
+// question for a person, else the call is allowed.
 type Chain []Policy
 
 // Decide implements Policy.
 func (c Chain) Decide(req Request) Verdict {
 	v := Verdict{Allow: true, Rule: "default-allow"}
+	var ask *Verdict
 	for _, p := range c {
-		if v = p.Decide(req); !v.Allow {
-			return v
+		x := p.Decide(req)
+		if x.denies() {
+			return x
 		}
+		if x.Ask && ask == nil {
+			ask = &x
+		}
+		v = x
+	}
+	if ask != nil {
+		return *ask
 	}
 	return v
 }
@@ -304,5 +335,25 @@ func Defaults() Rules {
 		{Name: "no-ssh", Path: "*/.ssh/*", Reason: "do not touch SSH keys"},
 		{Name: "no-cat-env", Command: regexp.MustCompile(`\b(cat|less|head|tail|more|source|\.)\s+\S*\.env\b|\bprintenv\b|^\s*env\s*$`),
 			Reason: "do not print environment files or variables: they hold secrets"},
+	}
+}
+
+// AskBeforeInstalls asks a person before the agent adds a dependency
+// (a package manager's add or install of a named package). Installing what
+// the project already names (npm ci, npm install with no package, pip
+// install -r or -e .) goes ahead. For runs a person is following, such as
+// a chat.
+func AskBeforeInstalls() Rules {
+	return Rules{
+		{Name: "ask-new-dependency", Ask: true, Reason: "it adds a dependency to the project",
+			Command: regexp.MustCompile(`(^|[;&|]\s*)(` +
+				`(npm|pnpm)\s+(install|i|add)(\s+-\S+)*\s+[^-\s]` +
+				`|yarn\s+(global\s+)?add\s` +
+				`|(pip3?|uv\s+pip)\s+install(\s+-[^re\s]\S*)*\s+[^-\s.]` +
+				`|(uv|poetry|cargo|bundle|pnpm|bun|deno)\s+add\s` +
+				`|go\s+get\s+\S` +
+				`|gem\s+install\s` +
+				`|composer\s+require\s` +
+				`)`)},
 	}
 }

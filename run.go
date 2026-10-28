@@ -51,6 +51,13 @@ type run struct {
 	decided     map[string]bool
 	denied      int
 
+	// asking a person (Request.Ask): what is being asked about, what they
+	// allowed (by command or path), and their answers as they come
+	asking  map[string]bool
+	allowed map[string]bool
+	answers chan answer
+	quit    chan struct{} // closed when the run ends
+
 	final    string
 	lastText string
 }
@@ -66,7 +73,9 @@ func (e *Engine) Run(ctx context.Context, req Request, ex Executor, onEvent func
 		onEvent = func(Event) {}
 	}
 	r := &run{e: e, req: req, ctx: ctx, on: onEvent, router: e.cfg.Router, guard: e.cfg.Guard,
-		meter: meter.New(e.cfg.Catalog), decided: map[string]bool{}}
+		meter: meter.New(e.cfg.Catalog), decided: map[string]bool{},
+		asking: map[string]bool{}, allowed: map[string]bool{}, answers: make(chan answer), quit: make(chan struct{})}
+	defer close(r.quit)
 	if req.Router != nil {
 		r.router = req.Router
 	}
@@ -195,12 +204,24 @@ func (r *run) prompt() string {
 		b.Limit, r.model)
 }
 
-// loop handles notifications until our turn completes.
+// loop handles notifications until our turn completes, and brings a
+// person's messages and answers into the turn as they come.
 func (r *run) loop() (msp.TurnCompleted, error) {
 	var killAt <-chan time.Time
 	ctxDone := r.ctx.Done()
+	steer := r.req.Steer
 	for {
 		select {
+		case msg, ok := <-steer:
+			if !ok {
+				steer = nil
+				continue
+			}
+			if msg = strings.TrimSpace(msg); msg != "" && r.stopped == StopNone {
+				r.steerWith("[Message from the person following this task] "+msg, "person")
+			}
+		case a := <-r.answers:
+			r.onAnswer(a)
 		case n, ok := <-r.client.Notifications():
 			if !ok {
 				err := r.client.Err()
@@ -322,6 +343,7 @@ func (r *run) limitCalls(calls int) {
 	case calls >= maxCalls:
 		r.stop(StopSteps, ErrStepLimit, fmt.Sprintf("reached the cap of %d model calls", maxCalls))
 	case !r.steered && float64(calls) >= r.e.cfg.SteerAt*float64(maxCalls):
+		r.steered = true
 		r.steerWith(fmt.Sprintf("[Step notice] You have used %d of the %d model calls this task may take. "+
 			"Stop exploring: finish with what you have and give your answer now, in the format asked for.", calls, maxCalls), "steps")
 	}
@@ -379,7 +401,6 @@ func (r *run) steer(spent money.USD) {
 
 // steerWith sends msg into the running turn.
 func (r *run) steerWith(msg, reason string) {
-	r.steered = true
 	err := r.client.Call(context.WithoutCancel(r.ctx), msp.MethodTurnSteer, msp.TurnSteerParams{CommandID: msp.NewCommandID(),
 		SessionID: r.sessionID, ExpectedTurnID: r.turnID, Input: []msp.InputPart{msp.Text(msg)}}, nil)
 	if err != nil {
@@ -447,7 +468,9 @@ func (r *run) setModel(id model.ID) error {
 // onApproval applies the guard to a tool call Muse is about to run. While
 // Muse's own judge is still reviewing it, only a denial is sent (the judge
 // may still refuse what the guard allows); when Muse asks the client
-// outright, the guard's answer is final.
+// outright, the guard's answer is final. A call the guard leaves to a
+// person is held back (a denial, which wins over the judge) while they are
+// asked; their answer comes later (onAnswer).
 func (r *run) onApproval(a msp.ApprovalRequested, asked bool) {
 	key := fmt.Sprintf("%s/%d", a.ApprovalID, a.CurrentRequirementID.SourceIndex)
 	if r.decided[key] {
@@ -458,19 +481,37 @@ func (r *run) onApproval(a msp.ApprovalRequested, asked bool) {
 	for _, st := range a.Subject.Stages {
 		req.Argv = append(req.Argv, st.Argv)
 	}
+	subject := firstNonEmpty(a.Subject.Command, a.Subject.Path, a.ToolName)
 	v := r.guard.Decide(req)
+	byPerson := v.Ask && r.allowed[subject]
+	if byPerson {
+		v = guard.Verdict{Allow: true, Rule: v.Rule, Reason: "the person allowed it"}
+	}
 	if v.Allow && !asked {
 		return // leave it to Muse's judge
 	}
 	r.decided[key] = true
 	choice, ok := pickChoice(a.AvailableChoices, v.Allow)
-	ap := &Approval{Tool: a.ToolName, Command: a.Subject.Command, Path: a.Subject.Path, Allow: v.Allow, Rule: v.Rule, Reason: v.Reason}
+	ap := &Approval{ID: a.ApprovalID, Tool: a.ToolName, Command: a.Subject.Command, Path: a.Subject.Path, Allow: v.Allow, Ask: v.Ask || byPerson,
+		Rule: v.Rule, Reason: v.Reason}
+	feedback := "Blocked by policy (" + v.Rule + "): " + v.Reason
+	if v.Ask {
+		if r.req.Ask == nil {
+			ap.Ask, feedback = false, "Blocked by policy ("+v.Rule+"): "+v.Reason+", and a person must allow that; nobody can be asked in this run"
+		} else {
+			ap.Pending = true
+			feedback = "A person must allow this first (" + v.Reason + "); they have been asked. Go on with other work; you will be told when they answer."
+			if !r.asking[subject] {
+				r.asking[subject] = true
+				r.ask(subject, *ap)
+			}
+		}
+	}
 	if ok {
 		params := msp.ApprovalDecideParams{CommandID: msp.NewCommandID(), SessionID: r.sessionID, ApprovalID: a.ApprovalID,
 			ChoiceID: choice.ChoiceID, RequirementID: a.CurrentRequirementID}
 		if !v.Allow && choice.AcceptsFeedback && v.Reason != "" {
-			fb := "Blocked by policy (" + v.Rule + "): " + v.Reason
-			params.Feedback = &fb
+			params.Feedback = &feedback
 		}
 		err := r.client.Call(context.WithoutCancel(r.ctx), msp.MethodApprovalDecide, params, nil)
 		ap.Applied = err == nil
@@ -478,10 +519,65 @@ func (r *run) onApproval(a msp.ApprovalRequested, asked bool) {
 			r.emit(Event{Kind: EventWarning, Reason: "approval: " + err.Error()})
 		}
 	}
-	if !v.Allow {
+	if !v.Allow && !ap.Pending {
 		r.denied++
 	}
 	r.emit(Event{Kind: EventApproval, Tool: a.ToolName, Approval: ap})
+}
+
+// answer is a person's answer about a tool call (answered false: none came
+// in time).
+type answer struct {
+	subject  string
+	ap       Approval
+	allow    bool
+	answered bool
+}
+
+// ask puts a held-back tool call to the person, and brings their answer
+// (or its absence after Config.AskTimeout) back to the loop.
+func (r *run) ask(subject string, ap Approval) {
+	ch := r.req.Ask(ap)
+	go func() {
+		t := time.NewTimer(r.e.cfg.AskTimeout)
+		defer t.Stop()
+		a := answer{subject: subject, ap: ap}
+		select {
+		case allow, ok := <-ch:
+			a.allow, a.answered = ok && allow, ok
+		case <-t.C:
+		case <-r.quit:
+			return
+		}
+		select {
+		case r.answers <- a:
+		case <-r.quit:
+		}
+	}()
+}
+
+// onAnswer tells Muse what the person decided about a held-back call.
+// Allowed, the guard lets the same command or path through from now on.
+func (r *run) onAnswer(a answer) {
+	delete(r.asking, a.subject)
+	var msg string
+	switch {
+	case a.allow:
+		r.allowed[a.subject] = true
+		msg = "[Approval] The person allowed: " + a.subject + "\nRun it now if you still need it."
+	case a.answered:
+		r.denied++
+		msg = "[Approval] The person did not allow: " + a.subject + "\nDo not run it. Find another way, or say in your answer why it is needed."
+	default:
+		r.denied++
+		msg = "[Approval] Nobody answered in time about: " + a.subject + "\nIt stays denied. Do not run it; find another way, or say in your answer why it is needed."
+	}
+	if r.stopped == StopNone {
+		r.steerWith(msg, "approval")
+	}
+	ap := a.ap
+	ap.Pending, ap.Allow = false, a.allow
+	r.emit(Event{Kind: EventApproval, Tool: ap.Tool, Approval: &ap})
 }
 
 // pickChoice finds the one-time allow, or the denial, among Muse's choices.

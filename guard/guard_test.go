@@ -1,6 +1,9 @@
 package guard
 
-import "testing"
+import (
+	"regexp"
+	"testing"
+)
 
 func TestDefaults(t *testing.T) {
 	p := Defaults()
@@ -141,4 +144,52 @@ b`, `"`, "2>&1", "<<"} {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, s string) { parseShell(s) })
+}
+
+func TestAskBeforeInstalls(t *testing.T) {
+	g := Chain{Defaults(), AskBeforeInstalls()}
+	for _, c := range []struct {
+		cmd  string
+		want string // allow, ask or deny
+	}{
+		{"npm install left-pad", "ask"},
+		{"npm i -D vitest", "ask"},
+		{"cd web && pnpm add zod", "ask"},
+		{"yarn add react", "ask"},
+		{"pip install requests", "ask"},
+		{"pip3 install --upgrade httpx", "ask"},
+		{"go get github.com/pkg/errors", "ask"},
+		{"cargo add serde", "ask"},
+		{"npm install", "allow"},
+		{"npm ci", "allow"},
+		{"pip install -r requirements.txt", "allow"},
+		{"pip install -e .", "allow"},
+		{"go test ./...", "allow"},
+		{"npm install x && git push", "deny"}, // a denial beats a question
+	} {
+		v := g.Decide(Request{Tool: "bash", Kind: "shell", Command: c.cmd})
+		got := "allow"
+		switch {
+		case v.Ask:
+			got = "ask"
+		case !v.Allow:
+			got = "deny"
+		}
+		if got != c.want {
+			t.Errorf("%q: %s (%+v), want %s", c.cmd, got, v, c.want)
+		}
+		if got == "ask" && (v.Rule != "ask-new-dependency" || v.Reason == "") {
+			t.Errorf("%q: verdict %+v", c.cmd, v)
+		}
+	}
+}
+
+func TestRulesDenyBeatsAsk(t *testing.T) {
+	rs := Rules{
+		{Name: "ask-x", Ask: true, Command: regexp.MustCompile(`\bx\b`), Reason: "asks"},
+		{Name: "no-x", Command: regexp.MustCompile(`\bx\b`), Reason: "denies"},
+	}
+	if v := rs.Decide(Request{Kind: "shell", Command: "x"}); v.Ask || v.Allow || v.Rule != "no-x" {
+		t.Fatalf("verdict = %+v", v)
+	}
 }

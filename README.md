@@ -58,6 +58,7 @@ Most integrations wrap `muse exec` and parse its output once the run is over. MS
 | Priority interrupt | `turn/interrupt` | Stopping inside the budget |
 | Model switch in a session | `session/setModel` | Escalating Spark → Wonder **with context kept**: no restart, no re-reading the repo |
 | Client-side approvals | `approval/reviewing`, `approval/requested` → `approval/decide` | Policy rules veto tool calls. A veto sent during Muse's own LLM review wins (verified on a real `git push`). |
+| A person in the loop | `turn/steer`, `approval/decide` | A person following the run talks to it mid-turn (`Request.Steer`), and decides the calls a rule leaves to them, such as adding a dependency (`Request.Ask`). The call is vetoed while they are asked, so Muse works on; when they allow it, Muse is told to run it and the guard lets it through ([ADR 0005](docs/adr/0005-person-in-the-loop.md)). |
 | Model catalog | `model/list` | What the account can run |
 | Subscription allowance | `usage/read`, `usage/changed` | Pausing an account at its limit |
 | Images in a turn | `turn/start` input parts | Visual review of UI screenshots |
@@ -76,7 +77,7 @@ agnts-muse/            package muse: Engine.Run, events, errors, LocalExecutor
 ├── msp/               MSP client: JSON-RPC 2.0 over stdio, typed messages checked against Muse's schema
 │   └── msptest/       in-memory host that replays recorded sessions
 ├── route/             model escalation policy
-├── guard/             tool-approval policy: default rules, read-only mode
+├── guard/             tool-approval policy: default rules, read-only mode, rules that ask a person
 ├── credential/        API keys, Meta device sign-in (RFC 8628), Muse's credential file, redaction
 ├── quote/             read-only Muse session that sizes a task before it runs
 └── cmd/muse-budget/   the CLI above
