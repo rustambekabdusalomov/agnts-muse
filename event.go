@@ -29,11 +29,14 @@ const (
 	EventToolEnd EventKind = "tool_end"
 	// EventUsage: a model call finished and was charged (Charge, Held).
 	EventUsage EventKind = "usage"
-	// EventSteer: Muse was told its budget is running low (Text).
+	// EventSteer: Muse was told something mid-turn (Text): its budget or
+	// calls are running low (Reason budget or steps), a person's message
+	// (person), or a person's answer about a tool call (approval).
 	EventSteer EventKind = "steer"
 	// EventEscalate: the session moved to a stronger model (Model, Reason).
 	EventEscalate EventKind = "escalate"
-	// EventApproval: the guard decided a tool call (Approval).
+	// EventApproval: the guard decided a tool call, or a person was asked
+	// about one (Pending) and answered (Approval).
 	EventApproval EventKind = "approval"
 	// EventRetry: Muse is retrying a failed model call (Reason).
 	EventRetry EventKind = "retry"
@@ -49,10 +52,17 @@ const (
 
 // Approval is a guard decision.
 type Approval struct {
+	// ID is Muse's id of the approval.
+	ID      string
 	Tool    string
 	Command string
 	Path    string
 	Allow   bool
+	// Ask says the guard left the call to a person. While Pending they
+	// have not answered and the call is held back; after, Allow is their
+	// answer (false when nobody answered in time).
+	Ask     bool
+	Pending bool
 	Rule    string
 	Reason  string
 	// Applied is false when Muse had already resolved the call.

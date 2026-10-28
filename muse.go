@@ -73,6 +73,9 @@ type Config struct {
 	// InterruptGrace is how long an interrupted turn may take to stop
 	// before the process is killed (15s).
 	InterruptGrace time.Duration
+	// AskTimeout is how long a person has to answer about a tool call the
+	// guard left to them (5m); no answer denies it.
+	AskTimeout time.Duration
 	// Trace receives every protocol line, for recording sessions.
 	Trace func(dir byte, line []byte)
 }
@@ -109,6 +112,9 @@ func New(cfg Config) *Engine {
 	}
 	if cfg.InterruptGrace <= 0 {
 		cfg.InterruptGrace = 15 * time.Second
+	}
+	if cfg.AskTimeout <= 0 {
+		cfg.AskTimeout = 5 * time.Minute
 	}
 	return &Engine{cfg: cfg}
 }
@@ -171,6 +177,16 @@ type Request struct {
 	// MaxCalls caps the run's model calls (0: no cap). Muse is told to
 	// wrap up at Config.SteerAt of it and stopped at it (ErrStepLimit).
 	MaxCalls int
+	// Steer brings a person's messages while the run works; each goes
+	// into the running turn (MSP turn/steer). Nil brings none.
+	Steer <-chan string
+	// Ask asks a person about a tool call the guard leaves to them
+	// (guard.Verdict.Ask). It must return at once, with a channel that
+	// gets their answer (true allows). Meanwhile the call is held back and
+	// Muse goes on; once they allow it, Muse is told to run it and the
+	// guard lets it through. No answer in Config.AskTimeout, or no Ask,
+	// denies it.
+	Ask func(Approval) <-chan bool
 }
 
 func (r Request) validate(hasLedger bool) error {

@@ -351,7 +351,7 @@ func (s *scripted) Start(context.Context, muse.Command) (muse.Process, error) {
 	h.Handle(msp.MethodSessionStart, func(json.RawMessage) (any, error) {
 		return msp.SessionResult{Session: msp.Session{SessionID: "s"}}, nil
 	})
-	for _, m := range []string{msp.MethodSessionLeave, msp.MethodSessionSetModel, msp.MethodTurnInterrupt, msp.MethodTurnSteer} {
+	for _, m := range []string{msp.MethodSessionLeave, msp.MethodSessionSetModel, msp.MethodTurnInterrupt, msp.MethodTurnSteer, msp.MethodApprovalDecide} {
 		h.Handle(m, ack)
 	}
 	h.Handle(msp.MethodTurnStart, func(json.RawMessage) (any, error) {
