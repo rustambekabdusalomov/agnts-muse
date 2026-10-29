@@ -121,13 +121,13 @@ func TestFailoverContinuesTheSessionOnTheFallback(t *testing.T) {
 	}
 
 	// The result covers both attempts, and each was charged under its own key.
-	if res.Fallback != "baseten" || res.Earlier == nil || res.Model != model.SparkOpen || res.Usage.Calls != 2 ||
-		res.Usage.Total != res.Earlier.Usage.Total*2 {
+	if res.Fallback != "baseten" || res.Primary == nil || res.Model != model.SparkOpen || res.Usage.Calls != 2 ||
+		res.Usage.Total != res.Primary.Usage.Total*2 {
 		t.Fatalf("result = %+v", res)
 	}
-	if res.Earlier.Receipt == nil || res.Receipt == nil || res.Receipt.Key != "run-1:baseten" ||
-		res.Earlier.Receipt.Charged+res.Receipt.Charged != res.Usage.Total {
-		t.Fatalf("receipts = %+v / %+v", res.Earlier.Receipt, res.Receipt)
+	if res.Primary.Receipt == nil || res.Receipt == nil || res.Receipt.Key != "run-1:baseten" ||
+		res.Primary.Receipt.Charged+res.Receipt.Charged != res.Usage.Total {
+		t.Fatalf("receipts = %+v / %+v", res.Primary.Receipt, res.Receipt)
 	}
 	bal, _ := l.Balance(context.Background(), "user:1")
 	if bal.Total != money.Dollar-res.Usage.Total {
@@ -147,7 +147,7 @@ func TestFailoverContinuesTheSessionOnTheFallback(t *testing.T) {
 		t.Fatalf("OutUntil = %v, want %v", until, resets)
 	}
 	ex.scripts = append(ex.scripts, &scripted{notes: []func(*msptest.Host){complete}})
-	if res, err := f.Run(ctxT(t), muse.Request{Prompt: "next"}, ex, nil); err != nil || res.Fallback != "baseten" || res.Earlier != nil {
+	if res, err := f.Run(ctxT(t), muse.Request{Prompt: "next"}, ex, nil); err != nil || res.Fallback != "baseten" || res.Primary != nil {
 		t.Fatalf("second run: %+v, %v", res, err)
 	}
 	if ex.started() != 3 {
@@ -277,7 +277,7 @@ func TestFallbackCapsCountOnlyTheFallback(t *testing.T) {
 	if err != nil || res.Fallback != "baseten" {
 		t.Fatalf("result %+v, err %v", res, err)
 	}
-	onFallback := res.Usage.Total - res.Earlier.Usage.Total
+	onFallback := res.Usage.Total - res.Primary.Usage.Total
 	if bal, _ := l.Balance(ctx, "fcap:user:1"); bal.Total != 5*money.Cent-onFallback {
 		t.Fatalf("allowance left %v, want %v", bal.Total, 5*money.Cent-onFallback)
 	}
@@ -307,79 +307,5 @@ func TestNoFallbackBudget(t *testing.T) {
 	f.Mode = func() muse.Mode { return muse.ModeFallback }
 	if _, err := f.Run(ctxT(t), muse.Request{Prompt: "p", Budget: b()}, ex, nil); !errors.Is(err, muse.ErrFallbackLimit) || ex.started() != 0 {
 		t.Fatalf("fallback: err %v, started %d", err, ex.started())
-	}
-}
-
-// TestPreferFallbackBillsThePlatform starts a run on Baseten, paid by a
-// platform account; when Baseten runs out mid-task, the run continues its
-// session on Meta, and only that part is charged to the person.
-func TestPreferFallbackBillsThePlatform(t *testing.T) {
-	ctx := context.Background()
-	l := memledger.New()
-	_, _ = l.Deposit(ctx, "user:1", money.Dollar, "credits")
-	_, _ = l.Deposit(ctx, "platform:fallback", money.Dollar, "hackathon")
-	_, _ = l.Deposit(ctx, "fcap:user:1", 50*money.Cent, "allowance")
-	ex := &attempts{scripts: []*scripted{
-		{notes: []func(*msptest.Host){usage(model.SparkOpen, 10_000, 0), failed("modelError", "billing_error: credit balance is too low")}},
-		{notes: []func(*msptest.Host){usage(model.Spark, 20_000, 0), complete}},
-	}}
-	f := &muse.Failover{Engine: muse.New(muse.Config{Ledger: l}), Fallback: baseten(t)}
-	on, events := collect()
-	primaryKey, _ := credential.APIKey("LLM_primary-key-0123456789")
-	res, err := f.Run(ctxT(t), muse.Request{Prompt: "fix it", Model: model.Spark, Credential: &primaryKey, PreferFallback: true,
-		Budget: &muse.Budget{Key: "k", Payers: []budget.AccountID{"user:1"}, Limit: 30 * money.Cent,
-			FallbackPayers: []budget.AccountID{"platform:fallback"}, FallbackCaps: []budget.AccountID{"fcap:user:1"}}}, ex, on)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ex.started() != 2 || !strings.Contains(strings.Join(ex.cmds[0].Args, " "), "endpoint_transport") ||
-		strings.Contains(strings.Join(ex.cmds[1].Args, " "), "endpoint_transport") {
-		t.Fatalf("commands = %+v", ex.cmds)
-	}
-	if len(ex.resumed) != 1 || ex.resumed[0].SessionID != "s" {
-		t.Fatalf("resumed = %+v", ex.resumed)
-	}
-	if res.Model != model.Spark || res.Fallback != "baseten" || res.Earlier == nil || res.Earlier.Model != model.SparkOpen || count(events(), muse.EventFailover) != 2 {
-		t.Fatalf("result %+v, earlier %+v", res, res.Earlier)
-	}
-	onBaseten, onMeta := res.Earlier.Usage.Total, res.Usage.Total-res.Earlier.Usage.Total
-	if bal, _ := l.Balance(ctx, "platform:fallback"); bal.Total != money.Dollar-onBaseten {
-		t.Fatalf("platform paid %v, want %v", money.Dollar-bal.Total, onBaseten)
-	}
-	if bal, _ := l.Balance(ctx, "user:1"); bal.Total != money.Dollar-onMeta {
-		t.Fatalf("person paid %v, want only the Meta part %v", money.Dollar-bal.Total, onMeta)
-	}
-	if bal, _ := l.Balance(ctx, "fcap:user:1"); bal.Total != 50*money.Cent-onBaseten {
-		t.Fatalf("allowance left %v", bal.Total)
-	}
-	// Baseten's spend left the run's own limit alone: Meta was given all 30¢.
-	if sent := ex.scripts[1].host.Sent(msp.MethodTurnStart); !strings.Contains(string(sent[0]), "[Continue]") {
-		t.Fatalf("turn/start = %s", sent)
-	}
-}
-
-// TestPreferFallbackWithNoAllowanceLeft goes straight to the primary when
-// the person's allowance on the fallback is spent.
-func TestPreferFallbackWithNoAllowanceLeft(t *testing.T) {
-	ctx := context.Background()
-	l := memledger.New()
-	_, _ = l.Deposit(ctx, "user:1", money.Dollar, "credits")
-	_, _ = l.Deposit(ctx, "platform:fallback", money.Dollar, "hackathon")
-	ex := &attempts{scripts: []*scripted{{notes: []func(*msptest.Host){usage(model.Spark, 10_000, 0), complete}}}}
-	f := &muse.Failover{Engine: muse.New(muse.Config{Ledger: l}), Fallback: baseten(t)}
-	b := &muse.Budget{Key: "k", Payers: []budget.AccountID{"user:1"}, FallbackPayers: []budget.AccountID{"platform:fallback"},
-		FallbackCaps: []budget.AccountID{"fcap:user:1"}} // an empty allowance
-	res, err := f.Run(ctxT(t), muse.Request{Prompt: "p", Model: model.Spark, PreferFallback: true, Budget: b}, ex, nil)
-	if err != nil || res.Model != model.Spark || ex.started() != 1 || res.Earlier == nil || res.Earlier.Fallback != "baseten" {
-		t.Fatalf("result %+v, err %v, started %d", res, err, ex.started())
-	}
-	if bal, _ := l.Balance(ctx, "platform:fallback"); bal.Total != money.Dollar {
-		t.Fatal("the platform paid for a run that never reached the fallback")
-	}
-	// With FallbackLimit < 0 it does not even try.
-	ex = &attempts{scripts: []*scripted{{notes: []func(*msptest.Host){complete}}}}
-	b.Key, b.FallbackLimit = "k2", -1
-	if res, err := f.Run(ctxT(t), muse.Request{Prompt: "p", Model: model.Spark, PreferFallback: true, Budget: b}, ex, nil); err != nil || res.Earlier != nil || res.Fallback != "" {
-		t.Fatalf("closed: %+v, %v", res, err)
 	}
 }

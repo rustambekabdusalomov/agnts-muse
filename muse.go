@@ -148,15 +148,8 @@ type Budget struct {
 	// provider (a person's monthly allowance there), on top of Caps.
 	FallbackCaps []budget.AccountID
 	// FallbackLimit is the most the run may spend on the fallback: 0 is
-	// whatever Limit allows (with FallbackPayers, what they and
-	// FallbackCaps allow), < 0 nothing (the run may not fail over).
+	// whatever Limit allows, < 0 nothing (the run may not fail over).
 	FallbackLimit money.USD
-	// FallbackPayers pay for the run's spend on the fallback instead of
-	// Payers, such as a platform account for a host's prepaid credit, so
-	// people are not charged for it. That spend then counts against
-	// FallbackCaps only, and spend on either provider leaves the other's
-	// limit alone.
-	FallbackPayers []budget.AccountID
 }
 
 // Image is an image attached to the prompt.
@@ -203,10 +196,6 @@ type Request struct {
 	// Steer brings a person's messages while the run works; each goes
 	// into the running turn (MSP turn/steer). Nil brings none.
 	Steer <-chan string
-	// PreferFallback starts the run on a Failover's fallback, and moves it
-	// to Credential when the fallback is out or its budget is spent (an
-	// Engine alone ignores it).
-	PreferFallback bool
 	// Ask asks a person about a tool call the guard leaves to them
 	// (guard.Verdict.Ask). It must return at once, with a channel that
 	// gets their answer (true allows). Meanwhile the call is held back and
@@ -263,13 +252,13 @@ type Result struct {
 	Denied      int // tool calls the guard denied
 	Duration    time.Duration
 	MuseVersion string
-	// Fallback names a Failover's fallback provider when the run ran there,
-	// in all or in part ("" when it did not).
+	// Fallback names the provider the run ran on when a Failover moved it
+	// off its own credential ("" when it did not).
 	Fallback string
-	// Earlier is the attempt on the other provider before a Failover moved
-	// the run (nil when it did not move). Usage and Duration include it;
-	// Receipt is this attempt's, Earlier.Receipt the other's.
-	Earlier *Result
+	// Primary is the attempt on the run's own credential before it failed
+	// over (nil when it did not run there). Usage and Duration include it;
+	// Receipt is the fallback's, Primary.Receipt the primary's.
+	Primary *Result
 }
 
 // Cost is what the run cost (the metered total).
