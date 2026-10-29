@@ -59,7 +59,12 @@ func ParseMode(s string) (Mode, error) {
 // own model (MSP keeps sessions on disk, so this works across providers).
 // It spends what is left of the run's limit, under its own budget key,
 // and within the budget's FallbackLimit and FallbackCaps: what a person
-// may spend on the fallback can be limited apart from the primary.
+// may spend on the fallback can be limited apart from the primary, and
+// FallbackPayers can pay for it instead of the run's own payers.
+//
+// A request with PreferFallback goes the other way: it starts on the
+// fallback, and moves to its own credential, in the same session, when the
+// fallback is out or its budget there is spent.
 //
 // After the primary runs out, a Failover sends runs straight to the
 // fallback until the primary's allowance resets (or for Cooldown when
@@ -129,7 +134,7 @@ func (f *Failover) Reset() {
 	f.mu.Unlock()
 }
 
-// Run is Engine.Run with failover. The Result's Fallback and Primary say
+// Run is Engine.Run with failover. The Result's Fallback and Earlier say
 // where the run went.
 func (f *Failover) Run(ctx context.Context, req Request, ex Executor, onEvent func(Event)) (Result, error) {
 	if f.Engine == nil || f.Fallback.Name == "" || f.Fallback.Model == "" {
@@ -148,47 +153,76 @@ func (f *Failover) Run(ctx context.Context, req Request, ex Executor, onEvent fu
 	case ModeFallback:
 		return f.onFallback(ctx, req, ex, onEvent, "runs use "+f.Fallback.Name)
 	}
+	if req.PreferFallback && !fallbackClosed(req.Budget) {
+		res, err := f.onFallback(ctx, req, ex, onEvent, "the run starts on "+f.Fallback.Name)
+		if err == nil || ctx.Err() != nil || !f.out(err) && !errors.Is(err, ErrBudget) && !errors.Is(err, ErrRunLimit) {
+			return res, err
+		}
+		return f.carryOn(ctx, req, res, err, ex, onEvent, false)
+	}
 	if until, why := f.OutUntil(); !until.IsZero() {
 		return f.onFallback(ctx, req, ex, onEvent, fmt.Sprintf("the primary is out until %s (%s)", until.Format(time.RFC3339), why))
 	}
 	res, err := f.Engine.Run(ctx, req, ex, onEvent)
-	out := f.Out
-	if out == nil {
-		out = ProviderOut
-	}
-	if err == nil || ctx.Err() != nil || !out(err) {
+	if err == nil || ctx.Err() != nil || !f.out(err) {
 		return res, err
 	}
 	f.markOut(err)
+	if fallbackClosed(req.Budget) {
+		return res, errors.Join(err, ErrFallbackLimit)
+	}
+	return f.carryOn(ctx, req, res, err, ex, onEvent, true)
+}
+
+func (f *Failover) out(err error) bool {
+	if f.Out != nil {
+		return f.Out(err)
+	}
+	return ProviderOut(err)
+}
+
+// fallbackClosed reports a budget that allows nothing on the fallback.
+func fallbackClosed(b *Budget) bool { return b != nil && b.FallbackLimit < 0 }
+
+// carryOn continues a run that stopped on one provider (res, err) on the
+// other, in the same session. When both bill the same payers, the run's
+// limit covers both attempts; when the fallback has payers of its own,
+// neither attempt counts against the other's.
+func (f *Failover) carryOn(ctx context.Context, req Request, res Result, err error, ex Executor, onEvent func(Event), toFallback bool) (Result, error) {
 	next := req
-	if b := req.Budget; b != nil {
-		if b.FallbackLimit < 0 {
-			return res, errors.Join(err, ErrFallbackLimit)
-		}
+	if b := req.Budget; b != nil && b.Limit > 0 && len(b.FallbackPayers) == 0 {
 		nb := *b
-		if b.Limit > 0 {
-			if nb.Limit = b.Limit - res.Cost(); nb.Limit <= 0 {
-				return res, err // the run spent its limit on the primary
-			}
+		if nb.Limit = b.Limit - res.Cost(); nb.Limit <= 0 {
+			return res, err // the run spent its limit
 		}
 		next.Budget = &nb
 	}
 	if res.SessionID != "" && !req.Ephemeral {
 		next.SessionID, next.Prompt = res.SessionID, resumePrompt(req.Prompt)
 	}
-	fres, ferr := f.onFallback(ctx, next, ex, onEvent, "the primary ran out: "+err.Error())
-	primary := res
-	fres.Primary = &primary
-	fres.Usage = res.Usage.Add(fres.Usage)
-	fres.Duration += res.Duration
-	fres.Denied += res.Denied
-	fres.Steered = fres.Steered || res.Steered
-	return fres, ferr
+	var nres Result
+	var nerr error
+	if toFallback {
+		nres, nerr = f.onFallback(ctx, next, ex, onEvent, "the primary ran out: "+err.Error())
+	} else {
+		nres, nerr = f.onPrimary(ctx, next, ex, onEvent, f.Fallback.Name+" stopped: "+err.Error())
+	}
+	earlier := res
+	nres.Earlier = &earlier
+	if nres.Fallback == "" {
+		nres.Fallback = res.Fallback
+	}
+	nres.Usage = res.Usage.Add(nres.Usage)
+	nres.Duration += res.Duration
+	nres.Denied += res.Denied
+	nres.Steered = nres.Steered || res.Steered
+	return nres, nerr
 }
 
 // onFallback runs req on the fallback provider. Its budget gets its own
 // key (ending ":" + the provider's name, so the fallback's spend can be
-// told apart), the fallback's caps, and at most the fallback's limit.
+// told apart) and the fallback's caps and limit. With FallbackPayers the
+// fallback bills them instead, under FallbackCaps alone.
 func (f *Failover) onFallback(ctx context.Context, req Request, ex Executor, onEvent func(Event), why string) (Result, error) {
 	p := f.Fallback
 	if b := req.Budget; b != nil {
@@ -197,23 +231,47 @@ func (f *Failover) onFallback(ctx context.Context, req Request, ex Executor, onE
 		}
 		nb := *b
 		nb.Key = b.Key + ":" + p.Name
-		nb.Caps = append(append([]budget.AccountID(nil), b.Caps...), b.FallbackCaps...)
-		if b.FallbackLimit > 0 && (nb.Limit <= 0 || b.FallbackLimit < nb.Limit) {
-			nb.Limit = b.FallbackLimit
+		if len(b.FallbackPayers) > 0 {
+			nb.Payers, nb.Caps, nb.Limit = append([]budget.AccountID(nil), b.FallbackPayers...), append([]budget.AccountID(nil), b.FallbackCaps...), b.FallbackLimit
+		} else {
+			nb.Caps = append(append([]budget.AccountID(nil), b.Caps...), b.FallbackCaps...)
+			if b.FallbackLimit > 0 && (nb.Limit <= 0 || b.FallbackLimit < nb.Limit) {
+				nb.Limit = b.FallbackLimit
+			}
 		}
-		nb.FallbackCaps, nb.FallbackLimit = nil, 0
+		nb.FallbackPayers, nb.FallbackCaps, nb.FallbackLimit = nil, nil, 0
 		req.Budget = &nb
 	}
 	req.Credential, req.Model, req.Router = &p.Credential, p.Model, route.Fixed(p.Model)
-	e := Event{Kind: EventFailover, Time: f.now(), SessionID: req.SessionID, Model: p.Model,
-		Reason: credential.NewRedactor(p.Credential.Secrets()...).Redact(why)}
+	f.emit(ctx, onEvent, Event{Kind: EventFailover, SessionID: req.SessionID, Model: p.Model,
+		Reason: credential.NewRedactor(p.Credential.Secrets()...).Redact(why)})
+	res, err := f.Engine.Run(ctx, req, ex, onEvent)
+	res.Fallback = p.Name
+	return res, err
+}
+
+// onPrimary runs req on its own credential after the fallback stopped.
+func (f *Failover) onPrimary(ctx context.Context, req Request, ex Executor, onEvent func(Event), why string) (Result, error) {
+	id := req.Model
+	if id == "" {
+		router := req.Router
+		if router == nil {
+			router = f.Engine.cfg.Router
+		}
+		id = router.Initial(req.Complexity)
+		req.Model = id
+	}
+	f.emit(ctx, onEvent, Event{Kind: EventFailover, SessionID: req.SessionID, Model: id,
+		Reason: credential.NewRedactor(f.Fallback.Credential.Secrets()...).Redact(why)})
+	return f.Engine.Run(ctx, req, ex, onEvent)
+}
+
+func (f *Failover) emit(ctx context.Context, onEvent func(Event), e Event) {
+	e.Time = f.now()
 	onEvent(e)
 	if o := f.Engine.cfg.Observer; o != nil {
 		o.Observe(ctx, e)
 	}
-	res, err := f.Engine.Run(ctx, req, ex, onEvent)
-	res.Fallback = p.Name
-	return res, err
 }
 
 // markOut skips the primary until its allowance resets, or for Cooldown.
