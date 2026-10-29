@@ -25,6 +25,9 @@ const (
 	Spark12    ID = "muse-spark-1.2"
 	Wonder     ID = "muse-wonder-1.0"
 	WonderFull ID = "muse-wonder-full-1.0"
+	// SparkOpen is Muse Spark Open, Meta's open-weights Spark, as Baseten
+	// serves it for the Meta hackathon.
+	SparkOpen ID = "meta-models/muse-spark-open-1026"
 )
 
 // Tier orders models by capability and price; routing escalates upward.
@@ -116,7 +119,7 @@ func dearer(a, b Price) Price {
 }
 
 // Default is the catalog at release (Muse Code 1.4.13, Oct 2026), with
-// Meta Model API list prices.
+// Meta Model API list prices, and Muse Spark Open at Baseten's.
 var Default = NewCatalog(
 	Info{ID: Spark, Alias: "spark", Tier: TierSpark, ContextLimit: 1_007_997,
 		Price: Price{Input: money.PerMillion(1.25), Cached: money.PerMillion(0.15), Output: money.PerMillion(4.25)}},
@@ -126,6 +129,9 @@ var Default = NewCatalog(
 		Price: Price{Input: money.PerMillion(4), Cached: money.PerMillion(0.20), Output: money.PerMillion(20)}},
 	Info{ID: WonderFull, Alias: "wonder-full", Tier: TierWonder, ContextLimit: 1_007_997,
 		Price: Price{Input: money.PerMillion(4), Cached: money.PerMillion(0.20), Output: money.PerMillion(20)}},
+	// Baseten's list price (Oct 2026), the same as Spark's on Meta.
+	Info{ID: SparkOpen, Alias: "spark-open", Tier: TierSpark, ContextLimit: 1_007_997,
+		Price: Price{Input: money.PerMillion(1.25), Cached: money.PerMillion(0.15), Output: money.PerMillion(4.25)}},
 )
 
 // Lookup returns the model with id.

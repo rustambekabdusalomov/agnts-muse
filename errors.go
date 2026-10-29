@@ -23,6 +23,9 @@ var (
 	ErrStepLimit = errors.New("muse: step limit reached")
 	// ErrExited: the Muse process ended before the turn did.
 	ErrExited = errors.New("muse: process exited")
+	// ErrFallbackLimit: the run would have moved to a Failover's fallback,
+	// but its budget allows nothing there (Budget.FallbackLimit < 0).
+	ErrFallbackLimit = errors.New("muse: no budget left on the fallback provider")
 	// ErrInvalid: the request itself is wrong.
 	ErrInvalid = errors.New("muse: invalid request")
 )

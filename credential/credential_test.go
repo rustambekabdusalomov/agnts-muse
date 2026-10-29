@@ -223,3 +223,34 @@ func TestLoginFileIsKeptAsIs(t *testing.T) {
 		}
 	}
 }
+
+func TestHosted(t *testing.T) {
+	c, err := Hosted(" https://inference.baseten.co/v1/ ", "b10_abc.0123456789xyz", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, files, err := c.Setup("")
+	if err != nil || len(files) != 0 || len(env) != 1 || env[0] != "META_API_KEY=b10_abc.0123456789xyz" {
+		t.Fatalf("Setup = %v %v %v", env, files, err)
+	}
+	args := c.Args()
+	if len(args) != 2 || args[0] != "-c" || args[1] != `endpoint_transport={"base_url":"https://inference.baseten.co/v1","auth":"bearer"}` {
+		t.Fatalf("Args = %q", args)
+	}
+	if s := fmt.Sprintf("%v %#v", c, c); strings.Contains(s, "0123456789") {
+		t.Fatalf("printing leaks the key: %s", s)
+	}
+	for _, bad := range [][2]string{
+		{"http://inference.baseten.co/v1", "b10_abc.0123456789xyz"}, // not https
+		{"https://user:pw@host/v1", "b10_abc.0123456789xyz"},        // credentials in the URL
+		{"https://inference.baseten.co/v1", "short"},
+		{"https://inference.baseten.co/v1", "two words 0123456789"},
+	} {
+		if _, err := Hosted(bad[0], bad[1], ""); !errors.Is(err, ErrInvalid) {
+			t.Errorf("Hosted(%q, %q) err = %v", bad[0], bad[1], err)
+		}
+	}
+	if k, _ := APIKey("LLM_0123456789abcdefgh"); k.Args() != nil {
+		t.Error("a Meta key got endpoint args")
+	}
+}

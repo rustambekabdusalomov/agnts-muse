@@ -134,6 +134,12 @@ type Budget struct {
 	Initial money.USD
 	// TTL is how long the hold lives without a model call.
 	TTL time.Duration
+	// FallbackCaps count only what the run spends on a Failover's fallback
+	// provider (a person's monthly allowance there), on top of Caps.
+	FallbackCaps []budget.AccountID
+	// FallbackLimit is the most the run may spend on the fallback: 0 is
+	// whatever Limit allows, < 0 nothing (the run may not fail over).
+	FallbackLimit money.USD
 }
 
 // Image is an image attached to the prompt.
@@ -236,6 +242,13 @@ type Result struct {
 	Denied      int // tool calls the guard denied
 	Duration    time.Duration
 	MuseVersion string
+	// Fallback names the provider the run ran on when a Failover moved it
+	// off its own credential ("" when it did not).
+	Fallback string
+	// Primary is the attempt on the run's own credential before it failed
+	// over (nil when it did not run there). Usage and Duration include it;
+	// Receipt is the fallback's, Primary.Receipt the primary's.
+	Primary *Result
 }
 
 // Cost is what the run cost (the metered total).
@@ -284,6 +297,9 @@ func (e *Engine) command(req Request) (Command, error) {
 	args := []string{"serve"}
 	if req.Ephemeral {
 		args = append(args, "--no-session-log")
+	}
+	if req.Credential != nil {
+		args = append(args, req.Credential.Args()...)
 	}
 	args = append(args, e.cfg.ServeArgs...)
 	cmd := Command{Path: e.cfg.Binary, Args: args, Dir: req.Workdir, Env: append([]string(nil), req.Env...)}
