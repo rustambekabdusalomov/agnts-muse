@@ -49,7 +49,7 @@ func TestResolve(t *testing.T) {
 
 func TestModelsOrder(t *testing.T) {
 	ms := Default.Models()
-	if len(ms) != 5 || ms[0].Tier != TierSpark || ms[len(ms)-1].Tier != TierWonder {
+	if len(ms) != 4 || ms[0].Tier != TierSpark || ms[len(ms)-1].Tier != TierWonder {
 		t.Fatalf("Models() = %+v", ms)
 	}
 }

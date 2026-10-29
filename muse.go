@@ -81,12 +81,12 @@ type Config struct {
 	// Continues is how many times a turn that ends without any answer is
 	// continued in the same session (0: never). A step with neither a tool
 	// call nor an answer makes Muse end the turn, but the task is not done:
-	// Muse Spark Open on Baseten returns such steps now and then.
+	// a model that returns only its reasoning for a step leaves it so.
 	Continues int
 	// Workflows lets Muse hand work to background workflows (its workflow
 	// tool). Off by default: a run ends with its turn, and a workflow
 	// launched in the background reports back only after it, so its work
-	// would be lost (Muse Spark Open on Baseten reaches for it at once).
+	// would be lost.
 	Workflows bool
 }
 
@@ -144,19 +144,6 @@ type Budget struct {
 	Initial money.USD
 	// TTL is how long the hold lives without a model call.
 	TTL time.Duration
-	// FallbackCaps count only what the run spends on a Failover's fallback
-	// provider (a person's monthly allowance there), on top of Caps.
-	FallbackCaps []budget.AccountID
-	// FallbackLimit is the most the run may spend on the fallback: 0 is
-	// whatever Limit allows (with FallbackPayers, what they and
-	// FallbackCaps allow), < 0 nothing (the run may not fail over).
-	FallbackLimit money.USD
-	// FallbackPayers pay for the run's spend on the fallback instead of
-	// Payers, such as a platform account for a host's prepaid credit, so
-	// people are not charged for it. That spend then counts against
-	// FallbackCaps only, and spend on either provider leaves the other's
-	// limit alone.
-	FallbackPayers []budget.AccountID
 }
 
 // Image is an image attached to the prompt.
@@ -203,10 +190,6 @@ type Request struct {
 	// Steer brings a person's messages while the run works; each goes
 	// into the running turn (MSP turn/steer). Nil brings none.
 	Steer <-chan string
-	// PreferFallback starts the run on a Failover's fallback, and moves it
-	// to Credential when the fallback is out or its budget is spent (an
-	// Engine alone ignores it).
-	PreferFallback bool
 	// Ask asks a person about a tool call the guard leaves to them
 	// (guard.Verdict.Ask). It must return at once, with a channel that
 	// gets their answer (true allows). Meanwhile the call is held back and
@@ -263,13 +246,6 @@ type Result struct {
 	Denied      int // tool calls the guard denied
 	Duration    time.Duration
 	MuseVersion string
-	// Fallback names a Failover's fallback provider when the run ran there,
-	// in all or in part ("" when it did not).
-	Fallback string
-	// Earlier is the attempt on the other provider before a Failover moved
-	// the run (nil when it did not move). Usage and Duration include it;
-	// Receipt is this attempt's, Earlier.Receipt the other's.
-	Earlier *Result
 }
 
 // Cost is what the run cost (the metered total).
@@ -318,9 +294,6 @@ func (e *Engine) command(req Request) (Command, error) {
 	args := []string{"serve"}
 	if req.Ephemeral {
 		args = append(args, "--no-session-log")
-	}
-	if req.Credential != nil {
-		args = append(args, req.Credential.Args()...)
 	}
 	if !e.cfg.Workflows {
 		args = append(args, "-c", `run.workflow_trigger_mode="off"`)

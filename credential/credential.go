@@ -2,9 +2,7 @@
 // Meta, and gets them into the process without leaking them.
 //
 // Muse accepts two credentials. An API key (Meta Model API, "LLM_…") goes
-// in META_API_KEY, which always wins over a login. A hosted key ([Hosted])
-// is the same, for another host that serves Muse models on Muse's API
-// (Baseten serves Muse Spark Open). A login is an OAuth
+// in META_API_KEY, which always wins over a login. A login is an OAuth
 // token from Meta's device flow (what `muse login` does); Muse reads it
 // from its credential file, whose location MUSE_AUTH_PATH overrides. This
 // package can run that device flow itself ([DeviceFlow]), so a web app can
@@ -16,7 +14,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 	"time"
 )
@@ -58,9 +55,6 @@ type Credential struct {
 	File []byte
 	// Label names the account for people ("rustam@example.com").
 	Label string
-	// BaseURL is set for a Hosted key: the host Muse calls instead of
-	// DefaultAPIBase.
-	BaseURL string
 }
 
 // Token is an OAuth token from Meta's device flow.
@@ -83,22 +77,6 @@ func APIKey(key string) (Credential, error) {
 		return Credential{}, fmt.Errorf("%w: a Meta Model API key starts with %s", ErrInvalid, APIKeyPrefix)
 	}
 	return Credential{Kind: KindAPIKey, APIKey: key}, nil
-}
-
-// Hosted returns an API key for another host that serves Muse models on
-// Muse's API, such as Baseten's OpenAI-compatible endpoint
-// ("https://inference.baseten.co/v1"). Its keys have their own shape, so
-// only that it is one plain token is checked.
-func Hosted(baseURL, key, label string) (Credential, error) {
-	key = strings.TrimSpace(key)
-	u, err := url.Parse(strings.TrimSpace(baseURL))
-	switch {
-	case err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil:
-		return Credential{}, fmt.Errorf("%w: a host's base URL must be https://host/path", ErrInvalid)
-	case len(key) < 16 || strings.ContainsAny(key, " \t\r\n\"'"):
-		return Credential{}, fmt.Errorf("%w: a host's API key is one token of at least 16 characters", ErrInvalid)
-	}
-	return Credential{Kind: KindAPIKey, APIKey: key, Label: label, BaseURL: strings.TrimSuffix(u.String(), "/")}, nil
 }
 
 // Login returns a login credential from a token.
@@ -158,9 +136,6 @@ func (c Credential) Secrets() []string {
 }
 
 func (c Credential) String() string {
-	if c.BaseURL != "" {
-		return fmt.Sprintf("muse %s at %s", c.Kind, c.BaseURL)
-	}
 	if c.Label != "" {
 		return fmt.Sprintf("muse %s (%s)", c.Kind, c.Label)
 	}
@@ -195,21 +170,6 @@ func (c Credential) Setup(authPath string) (env []string, files []File, err erro
 		return []string{EnvAuthPath + "=" + authPath}, []File{{Path: authPath, Data: data, Mode: 0o600}}, nil
 	}
 	return nil, nil, fmt.Errorf("%w: kind %q", ErrInvalid, c.Kind)
-}
-
-// Args are the `muse serve` arguments a credential needs. A Hosted key
-// needs the host pinned in Muse's endpoint_transport setting with bearer
-// auth: Muse withholds the key from any other base URL (a --base-url flag
-// alone is not enough), so a key cannot leak to a host by accident.
-func (c Credential) Args() []string {
-	if c.BaseURL == "" {
-		return nil
-	}
-	v, _ := json.Marshal(struct {
-		BaseURL string `json:"base_url"`
-		Auth    string `json:"auth"`
-	}{c.BaseURL, "bearer"})
-	return []string{"-c", "endpoint_transport=" + string(v)}
 }
 
 // authFile is Muse Code's credential file (schema 1), as `muse login`

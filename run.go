@@ -313,9 +313,8 @@ func (r *run) handle(n msp.Notification) (msp.TurnCompleted, bool) {
 }
 
 // shouldContinue reports a turn that completed without any agent message:
-// the model's last step had neither a tool call nor an answer (Muse Spark
-// Open on Baseten sometimes returns only its reasoning), so the task was
-// left unfinished, not done.
+// the model's last step had neither a tool call nor an answer (it returned
+// only its reasoning), so the task was left unfinished, not done.
 func (r *run) shouldContinue(c msp.TurnCompleted) bool {
 	return c.Terminal == msp.TerminalCompleted && !r.answered && r.stopped == StopNone &&
 		r.continues < r.e.cfg.Continues && r.ctx.Err() == nil
