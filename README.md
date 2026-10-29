@@ -59,6 +59,7 @@ Most integrations wrap `muse exec` and parse its output once the run is over. MS
 | Model switch in a session | `session/setModel` | Escalating Spark → Wonder **with context kept**: no restart, no re-reading the repo |
 | Client-side approvals | `approval/reviewing`, `approval/requested` → `approval/decide` | Policy rules veto tool calls. A veto sent during Muse's own LLM review wins (verified on a real `git push`). |
 | A person in the loop | `turn/steer`, `approval/decide` | A person following the run talks to it mid-turn (`Request.Steer`), and decides the calls a rule leaves to them, such as adding a dependency (`Request.Ask`). The call is vetoed while they are asked, so Muse works on; when they allow it, Muse is told to run it and the guard lets it through ([ADR 0005](docs/adr/0005-person-in-the-loop.md)). |
+| Session resume across providers | `session/resume`, `session/setModel` | Failover: when the platform's Meta account runs out, the run **resumes its own session** on another host serving Muse Spark Open (Baseten), with its remaining budget ([ADR 0006](docs/adr/0006-provider-failover.md)). |
 | Model catalog | `model/list` | What the account can run |
 | Subscription allowance | `usage/read`, `usage/changed` | Pausing an account at its limit |
 | Images in a turn | `turn/start` input parts | Visual review of UI screenshots |
@@ -78,7 +79,7 @@ agnts-muse/            package muse: Engine.Run, events, errors, LocalExecutor
 │   └── msptest/       in-memory host that replays recorded sessions
 ├── route/             model escalation policy
 ├── guard/             tool-approval policy: default rules, read-only mode, rules that ask a person
-├── credential/        API keys, Meta device sign-in (RFC 8628), Muse's credential file, redaction
+├── credential/        API keys (Meta's and hosted ones), Meta device sign-in (RFC 8628), Muse's credential file, redaction
 ├── quote/             read-only Muse session that sizes a task before it runs
 └── cmd/muse-budget/   the CLI above
 ```
@@ -128,6 +129,7 @@ To run Muse somewhere else, implement `Executor`. agnts runs it with `docker exe
 - **MSP over `exec`** ([ADR 0001](docs/adr/0001-msp-over-exec.md)). Live usage, steering, interrupts and approvals exist only in the session protocol.
 - **The schema is the contract.** `msp/schema_test.go` checks every field of every hand-written type against Muse's own JSON Schema snapshot, and the client warns when a server's schema fingerprint changes.
 - **Real sessions as fixtures.** `testdata/` holds sanitized recordings of real `muse serve` sessions: a fix with 5 metered calls, and a guard veto of `git push`. `msptest` replays them, so engine tests run against Muse's real output without Muse or an account.
+- **Fail over, keep the session** ([ADR 0006](docs/adr/0006-provider-failover.md)). `Failover` moves runs to a fallback host only when the account is out (a quota, a refused key, a billing error), never on a passing overload. It continues the same session there, skips the primary until its quota resets, and lets an operator pin `primary`, `fallback` or `auto` while the server runs.
 - **Nested modules** ([ADR 0004](docs/adr/0004-nested-modules.md)). `pgledger` brings in pgx; the core does not.
 
 ## Quality

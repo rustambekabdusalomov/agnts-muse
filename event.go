@@ -46,6 +46,9 @@ const (
 	EventInterrupt EventKind = "interrupt"
 	// EventSettled: the run's cost was charged (Receipt).
 	EventSettled EventKind = "settled"
+	// EventFailover: the run moved to the fallback provider (Model,
+	// Reason); see Failover.
+	EventFailover EventKind = "failover"
 	// EventWarning: something worth logging that did not stop the run.
 	EventWarning EventKind = "warning"
 )
