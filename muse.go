@@ -78,6 +78,11 @@ type Config struct {
 	AskTimeout time.Duration
 	// Trace receives every protocol line, for recording sessions.
 	Trace func(dir byte, line []byte)
+	// Workflows lets Muse hand work to background workflows (its workflow
+	// tool). Off by default: a run ends with its turn, and a workflow
+	// launched in the background reports back only after it, so its work
+	// would be lost (Muse Spark Open on Baseten reaches for it at once).
+	Workflows bool
 }
 
 // Engine runs Muse sessions. It is safe for concurrent use; each Run
@@ -311,6 +316,9 @@ func (e *Engine) command(req Request) (Command, error) {
 	}
 	if req.Credential != nil {
 		args = append(args, req.Credential.Args()...)
+	}
+	if !e.cfg.Workflows {
+		args = append(args, "-c", `run.workflow_trigger_mode="off"`)
 	}
 	args = append(args, e.cfg.ServeArgs...)
 	cmd := Command{Path: e.cfg.Binary, Args: args, Dir: req.Workdir, Env: append([]string(nil), req.Env...)}
