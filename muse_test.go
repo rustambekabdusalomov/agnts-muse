@@ -492,7 +492,7 @@ func TestCredentialReachesTheProcess(t *testing.T) {
 	f.mu.Lock()
 	cmd := f.cmd
 	f.mu.Unlock()
-	if strings.Join(cmd.Args, " ") != "serve --no-session-log" || len(cmd.Files) != 1 || cmd.Files[0].Path != "/home/agent/.config/muse/auth.json" {
+	if strings.Join(cmd.Args, " ") != `serve --no-session-log -c run.workflow_trigger_mode="off"` || len(cmd.Files) != 1 || cmd.Files[0].Path != "/home/agent/.config/muse/auth.json" {
 		t.Fatalf("command = %+v", cmd)
 	}
 	if !strings.Contains(strings.Join(cmd.Env, " "), "MUSE_AUTH_PATH=/home/agent/.config/muse/auth.json") {
@@ -567,5 +567,27 @@ func TestMaxCallsSteersThenStops(t *testing.T) {
 	}
 	if steer != "steps" || len(s.host.Sent(msp.MethodTurnInterrupt)) != 1 || len(s.host.Sent(msp.MethodTurnSteer)) != 1 {
 		t.Fatalf("steer %q, interrupts %d", steer, len(s.host.Sent(msp.MethodTurnInterrupt)))
+	}
+}
+
+// TestNoBackgroundWorkflows keeps Muse from handing a run's work to a
+// background workflow, which would report back only after the run ended;
+// Config.Workflows lets a caller that waits for them turn it back on.
+func TestNoBackgroundWorkflows(t *testing.T) {
+	for _, tc := range []struct {
+		cfg  muse.Config
+		want bool
+	}{{muse.Config{}, true}, {muse.Config{Workflows: true}, false}} {
+		f := newFake(t, "testdata/msp-session.jsonl", recordedSession)
+		f.pause = 0
+		if _, err := muse.New(tc.cfg).Run(ctxT(t), muse.Request{Prompt: "p"}, f, nil); err != nil {
+			t.Fatal(err)
+		}
+		f.mu.Lock()
+		args := strings.Join(f.cmd.Args, " ")
+		f.mu.Unlock()
+		if got := strings.Contains(args, `run.workflow_trigger_mode="off"`); got != tc.want {
+			t.Errorf("Workflows=%v: args %q", tc.cfg.Workflows, args)
+		}
 	}
 }
