@@ -46,9 +46,6 @@ const (
 	EventInterrupt EventKind = "interrupt"
 	// EventSettled: the run's cost was charged (Receipt).
 	EventSettled EventKind = "settled"
-	// EventFailover: the run moved to the fallback provider (Model,
-	// Reason); see Failover.
-	EventFailover EventKind = "failover"
 	// EventContinue: a turn ended without any answer and the run goes on
 	// in a new turn of the same session (Reason).
 	EventContinue EventKind = "continue"

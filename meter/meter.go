@@ -111,18 +111,3 @@ func (m *Meter) Snapshot() Snapshot {
 	defer m.mu.Unlock()
 	return Snapshot{Total: m.total, Usage: m.usage, ByModel: maps.Clone(m.byModel), Calls: m.calls, Estimated: m.estimated}
 }
-
-// Add returns the totals of s and o together, such as a run's attempts on
-// two providers. Each was rounded up on its own, so the sum is what their
-// two charges add up to.
-func (s Snapshot) Add(o Snapshot) Snapshot {
-	by := maps.Clone(s.ByModel)
-	if by == nil {
-		by = map[model.ID]model.Usage{}
-	}
-	for id, u := range o.ByModel {
-		by[id] = by[id].Add(u)
-	}
-	return Snapshot{Total: s.Total + o.Total, Usage: s.Usage.Add(o.Usage), ByModel: by, Calls: s.Calls + o.Calls,
-		Estimated: s.Estimated || o.Estimated}
-}

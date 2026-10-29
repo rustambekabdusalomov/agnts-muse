@@ -594,8 +594,8 @@ func TestNoBackgroundWorkflows(t *testing.T) {
 
 // TestApprovalWithTwoRequirements decides each requirement of an approval:
 // Muse asks for the first with approval/requested and for the next only
-// with an approval/request. Undecided, the run would wait forever (Muse
-// Spark Open on Baseten, whose own reviewer cannot run there).
+// with an approval/request. Undecided, the run would wait forever (when
+// Muse's own reviewer cannot decide and every requirement comes to us).
 func TestApprovalWithTwoRequirements(t *testing.T) {
 	choices := []msp.ApprovalChoice{{ChoiceID: "allow_once", Decision: msp.DecisionApproved, Scope: "once"}, {ChoiceID: "deny", Decision: msp.DecisionDenied}}
 	ask := func(index int) msp.ApprovalRequested {
