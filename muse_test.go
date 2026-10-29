@@ -625,3 +625,62 @@ func TestApprovalWithTwoRequirements(t *testing.T) {
 		t.Fatalf("decided requirements %v, want 0 and 1", decided)
 	}
 }
+
+// turns is an executor whose session plays one script per turn.
+type turns struct {
+	scripts [][]func(*msptest.Host)
+	host    *msptest.Host
+	started int
+}
+
+func (s *turns) Start(context.Context, muse.Command) (muse.Process, error) {
+	h, conn := msptest.New()
+	s.host = h
+	ack := func(json.RawMessage) (any, error) { return msp.CommandAck{Status: "accepted"}, nil }
+	h.Handle(msp.MethodSessionStart, func(json.RawMessage) (any, error) {
+		return msp.SessionResult{Session: msp.Session{SessionID: "s"}}, nil
+	})
+	for _, m := range []string{msp.MethodSessionLeave, msp.MethodTurnInterrupt, msp.MethodTurnSteer, msp.MethodApprovalDecide} {
+		h.Handle(m, ack)
+	}
+	h.Handle(msp.MethodTurnStart, func(json.RawMessage) (any, error) {
+		notes := s.scripts[min(s.started, len(s.scripts)-1)]
+		s.started++
+		go func() {
+			for _, n := range notes {
+				n(h)
+				time.Sleep(5 * time.Millisecond)
+			}
+		}()
+		return msp.TurnStartResult{TurnID: "t"}, nil
+	})
+	return &fakeProcess{ReadWriteCloser: conn, host: h}, nil
+}
+
+func answer(text string) func(*msptest.Host) {
+	return func(h *msptest.Host) {
+		_ = h.Notify(msp.NoteItemCompleted, msp.ItemEvent{SessionID: "s", Item: msp.Item{ItemID: "m", Kind: msp.ItemAgentMessage, Text: text, MessagePhase: "finalAnswer"}})
+	}
+}
+
+// TestContinuesATurnWithoutAnAnswer starts another turn in the session
+// when one ends without any answer, up to Config.Continues times.
+func TestContinuesATurnWithoutAnAnswer(t *testing.T) {
+	empty := []func(*msptest.Host){usage(model.Spark, 1000, 10), complete}
+	s := &turns{scripts: [][]func(*msptest.Host){empty, {usage(model.Spark, 1000, 10), answer("Done: edited a.go"), complete}}}
+	on, events := collect()
+	res, err := muse.New(muse.Config{Continues: 2}).Run(ctxT(t), muse.Request{Prompt: "p"}, s, on)
+	if err != nil || res.Text != "Done: edited a.go" || res.Usage.Calls != 2 || s.started != 2 || count(events(), muse.EventContinue) != 1 {
+		t.Fatalf("result %+v, err %v, turns %d", res, err, s.started)
+	}
+	if sent := s.host.Sent(msp.MethodTurnStart); len(sent) != 2 || !strings.Contains(string(sent[1]), "[Continue]") {
+		t.Fatalf("turn/start = %s", sent)
+	}
+	// It gives up after Continues empty turns, and never continues by default.
+	for _, tc := range []struct{ continues, turns int }{{2, 3}, {0, 1}} {
+		s := &turns{scripts: [][]func(*msptest.Host){empty}}
+		if _, err := muse.New(muse.Config{Continues: tc.continues}).Run(ctxT(t), muse.Request{Prompt: "p"}, s, nil); err != nil || s.started != tc.turns {
+			t.Errorf("continues %d: %d turns, err %v; want %d", tc.continues, s.started, err, tc.turns)
+		}
+	}
+}

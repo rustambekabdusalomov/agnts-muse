@@ -49,6 +49,9 @@ const (
 	// EventFailover: a Failover put the run on another provider: the
 	// fallback, or back on its own credential (Model, Reason).
 	EventFailover EventKind = "failover"
+	// EventContinue: a turn ended without any answer and the run goes on
+	// in a new turn of the same session (Reason).
+	EventContinue EventKind = "continue"
 	// EventWarning: something worth logging that did not stop the run.
 	EventWarning EventKind = "warning"
 )
