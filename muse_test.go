@@ -591,3 +591,37 @@ func TestNoBackgroundWorkflows(t *testing.T) {
 		}
 	}
 }
+
+// TestApprovalWithTwoRequirements decides each requirement of an approval:
+// Muse asks for the first with approval/requested and for the next only
+// with an approval/request. Undecided, the run would wait forever (Muse
+// Spark Open on Baseten, whose own reviewer cannot run there).
+func TestApprovalWithTwoRequirements(t *testing.T) {
+	choices := []msp.ApprovalChoice{{ChoiceID: "allow_once", Decision: msp.DecisionApproved, Scope: "once"}, {ChoiceID: "deny", Decision: msp.DecisionDenied}}
+	ask := func(index int) msp.ApprovalRequested {
+		return msp.ApprovalRequested{SessionID: "s", ApprovalID: "ap", ToolName: "bash", Subject: msp.ApprovalSubject{Kind: "shell", Command: "cp a b"},
+			AvailableChoices: choices, CurrentRequirementID: msp.RequirementRef{ApprovalID: "ap", SourceIndex: index}}
+	}
+	s := &scripted{notes: []func(*msptest.Host){
+		func(h *msptest.Host) { _ = h.Notify(msp.NoteApprovalRequested, ask(0)) },
+		func(h *msptest.Host) {
+			time.Sleep(20 * time.Millisecond)
+			_ = h.Request(9, msp.RequestApproval, ask(1))
+		},
+		func(h *msptest.Host) { time.Sleep(20 * time.Millisecond) },
+		complete,
+	}}
+	if _, err := muse.New(muse.Config{}).Run(ctxT(t), muse.Request{Prompt: "p"}, s, nil); err != nil {
+		t.Fatal(err)
+	}
+	decided := map[int]bool{}
+	for _, raw := range s.host.Sent(msp.MethodApprovalDecide) {
+		var d msp.ApprovalDecideParams
+		if json.Unmarshal(raw, &d) == nil && d.ChoiceID == "allow_once" {
+			decided[d.RequirementID.SourceIndex] = true
+		}
+	}
+	if !decided[0] || !decided[1] {
+		t.Fatalf("decided requirements %v, want 0 and 1", decided)
+	}
+}
