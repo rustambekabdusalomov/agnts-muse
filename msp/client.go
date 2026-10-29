@@ -260,6 +260,14 @@ func (c *Client) dispatch(line []byte) {
 	switch {
 	case m.ID != nil && m.Method != "":
 		go c.answer(*m.ID, m.Method, m.Params)
+		if m.Method == RequestApproval {
+			// Muse asks for each later requirement of an approval only
+			// with this request (the first also comes as
+			// approval/requested). The receipt does not decide it, so it
+			// reaches the caller like the notification; a decision is an
+			// approval/decide command.
+			c.queue.push(Notification{Method: NoteApprovalRequested, Params: m.Params})
+		}
 	case m.ID != nil:
 		var id int64
 		if json.Unmarshal(*m.ID, &id) != nil {

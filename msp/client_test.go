@@ -128,6 +128,27 @@ func TestServerRequestsAreAcknowledged(t *testing.T) {
 	t.Fatalf("no receipt for approval/request; got %+v", h.Received())
 }
 
+// TestApprovalRequestsReachTheCaller passes approval/request on like
+// approval/requested: Muse asks for an approval's later requirements only
+// with the request, and the receipt does not decide them.
+func TestApprovalRequestsReachTheCaller(t *testing.T) {
+	h, conn := msptest.New()
+	c := msp.NewClient(conn)
+	defer c.Close()
+	if err := h.Request(8, msp.RequestApproval, map[string]any{"approvalId": "a", "currentRequirementId": map[string]any{"approvalId": "a", "sourceIndex": 1}}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case n := <-c.Notifications():
+		a, err := msp.Decode[msp.ApprovalRequested](n)
+		if n.Method != msp.NoteApprovalRequested || err != nil || a.ApprovalID != "a" || a.CurrentRequirementID.SourceIndex != 1 {
+			t.Fatalf("notification %s %+v, %v", n.Method, a, err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("approval/request did not reach the caller")
+	}
+}
+
 func TestHandlerAnswersServerRequests(t *testing.T) {
 	h, conn := msptest.New()
 	got := make(chan string, 1)
