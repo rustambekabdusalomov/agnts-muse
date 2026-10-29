@@ -60,6 +60,10 @@ type run struct {
 
 	final    string
 	lastText string
+	// answered is set when the current turn had an agent message; a turn
+	// that ends without one is continued (Config.Continues).
+	answered  bool
+	continues int
 }
 
 // Run executes req and returns when Muse's turn ends, the budget stops it,
@@ -184,6 +188,21 @@ func (r *run) startTurn() error {
 	for _, img := range r.req.Images {
 		input = append(input, msp.InputPart{Type: "image", MediaType: img.MediaType, Base64Data: base64.StdEncoding.EncodeToString(img.Data)})
 	}
+	return r.turn(input)
+}
+
+// continueTurn starts another turn in the session after one that ended
+// with neither a tool call nor an answer.
+func (r *run) continueTurn() error {
+	return r.turn([]msp.InputPart{msp.Text(continuePrompt)})
+}
+
+// continuePrompt asks the model to carry on after an empty last step.
+const continuePrompt = "[Continue] Your last step ended without a tool call or an answer, so the task is not done. " +
+	"Carry on from where you are: call the tools you need to make the changes, then finish with a short summary of what you changed and checked."
+
+func (r *run) turn(input []msp.InputPart) error {
+	r.answered = false
 	var t msp.TurnStartResult
 	if err := r.client.Call(r.ctx, msp.MethodTurnStart, msp.TurnStartParams{CommandID: msp.NewCommandID(), SessionID: r.sessionID,
 		Input: input, ReasoningEffort: r.req.Effort}, &t); err != nil {
@@ -231,6 +250,14 @@ func (r *run) loop() (msp.TurnCompleted, error) {
 				return msp.TurnCompleted{}, fmt.Errorf("%w before the turn ended: %w", ErrExited, err)
 			}
 			if done, ok := r.handle(n); ok {
+				if r.shouldContinue(done) {
+					r.continues++
+					r.emit(Event{Kind: EventContinue, Reason: fmt.Sprintf("the turn ended without an answer; continuing (%d of %d)", r.continues, r.e.cfg.Continues)})
+					if err := r.continueTurn(); err != nil {
+						return done, err
+					}
+					continue
+				}
 				return done, r.turnError(done)
 			}
 		case <-ctxDone:
@@ -285,12 +312,22 @@ func (r *run) handle(n msp.Notification) (msp.TurnCompleted, bool) {
 	return msp.TurnCompleted{}, false
 }
 
+// shouldContinue reports a turn that completed without any agent message:
+// the model's last step had neither a tool call nor an answer (Muse Spark
+// Open on Baseten sometimes returns only its reasoning), so the task was
+// left unfinished, not done.
+func (r *run) shouldContinue(c msp.TurnCompleted) bool {
+	return c.Terminal == msp.TerminalCompleted && !r.answered && r.stopped == StopNone &&
+		r.continues < r.e.cfg.Continues && r.ctx.Err() == nil
+}
+
 func (r *run) onItem(it msp.Item) {
 	switch it.Kind {
 	case msp.ItemAgentMessage:
 		if it.Text == "" {
 			return
 		}
+		r.answered = true
 		final := it.MessagePhase == "finalAnswer"
 		r.lastText = it.Text
 		if final {

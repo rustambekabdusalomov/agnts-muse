@@ -78,6 +78,11 @@ type Config struct {
 	AskTimeout time.Duration
 	// Trace receives every protocol line, for recording sessions.
 	Trace func(dir byte, line []byte)
+	// Continues is how many times a turn that ends without any answer is
+	// continued in the same session (0: never). A step with neither a tool
+	// call nor an answer makes Muse end the turn, but the task is not done:
+	// Muse Spark Open on Baseten returns such steps now and then.
+	Continues int
 	// Workflows lets Muse hand work to background workflows (its workflow
 	// tool). Off by default: a run ends with its turn, and a workflow
 	// launched in the background reports back only after it, so its work
