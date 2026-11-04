@@ -14,7 +14,7 @@ Concurrent runs sharing a balance can never push it below zero: not across gorou
 
 It is the engine behind [agnts](https://github.com/rustambekabdusalomov/agnts) ([agnts.uz](https://agnts.uz)), a self-hosted AI engineer that takes Jira and Plane tickets, codes them in isolated containers, and ships nothing without approval. agnts lets teams pay for AI in local currency with prepaid credits. `agnts-muse` is what makes those credits safe to sell.
 
-> **Meta AI developer hackathon, Startup track.** This module is our Muse Code
+> **Meta AI developer hackathon, Indie Developer track.** This module is our Muse Code
 > integration; [agnts](https://github.com/rustambekabdusalomov/agnts) is the
 > product built on it (tickets, log watcher, security scans, meetings and team
 > chat, all running on Muse).
