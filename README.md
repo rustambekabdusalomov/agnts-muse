@@ -158,3 +158,7 @@ go run ./cmd/muse-budget run --budget 0.25 "describe this repository"
 ```
 
 Re-record a fixture after a Muse upgrade with `muse.Config{Trace: …}` and update `testdata/msp.schema.json` with `muse schema generate-json-schema`. The schema test then lists every field that moved.
+
+## License
+
+MIT — see [LICENSE](LICENSE). Muse Code itself is Meta's and is not covered by this license.
