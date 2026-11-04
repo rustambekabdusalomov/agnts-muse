@@ -12,7 +12,12 @@
 
 Concurrent runs sharing a balance can never push it below zero: not across goroutines, not across servers.
 
-It is the engine behind [agnts](https://agnts.uz), a self-hosted AI engineer that takes Jira and Plane tickets, codes them in isolated containers, and ships nothing without approval. agnts lets teams pay for AI in local currency with prepaid credits. `agnts-muse` is what makes those credits safe to sell.
+It is the engine behind [agnts](https://github.com/rustambekabdusalomov/agnts) ([agnts.uz](https://agnts.uz)), a self-hosted AI engineer that takes Jira and Plane tickets, codes them in isolated containers, and ships nothing without approval. agnts lets teams pay for AI in local currency with prepaid credits. `agnts-muse` is what makes those credits safe to sell.
+
+> **Meta AI developer hackathon, Startup track.** This module is our Muse Code
+> integration; [agnts](https://github.com/rustambekabdusalomov/agnts) is the
+> product built on it (tickets, log watcher, security scans, meetings and team
+> chat, all running on Muse).
 
 ```text
 $ muse-budget run --budget 0.05 --model spark "Fix the failing test, then add table-driven tests …"
@@ -85,6 +90,17 @@ agnts-muse/            package muse: Engine.Run, events, errors, LocalExecutor
 
 The core module imports only the standard library.
 
+## Install
+
+Needs Go 1.24+ and the [Muse Code](https://dev.meta.ai) CLI (`muse`) on the
+`PATH`, signed in (`muse login`) or with a Meta Model API key.
+
+```sh
+go get github.com/rustambekabdusalomov/agnts-muse
+go get github.com/rustambekabdusalomov/agnts-muse/ledger/pgledger   # optional PostgreSQL store
+go install github.com/rustambekabdusalomov/agnts-muse/cmd/muse-budget@latest
+```
+
 ## Use
 
 ```go
@@ -120,6 +136,19 @@ case err != nil:
 
 To run Muse somewhere else, implement `Executor`. agnts runs it with `docker exec -i` inside each run's container.
 
+More of `Request` and `Config`:
+
+| Field | What it does |
+| --- | --- |
+| `Request.Steer` | A channel of a person's messages, each delivered into the running turn (`turn/steer`) |
+| `Request.Ask` | Asks a person about a call the guard leaves to them; the call waits for their Allow ([ADR 0005](docs/adr/0005-person-in-the-loop.md)) |
+| `Request.MaxCalls` | Caps a run's model calls: steered at 80%, stopped at the cap (`ErrStepLimit`) |
+| `Request.ExtraRoots` | More directories Muse's file tools may use, e.g. where a read-only run writes its result file |
+| `Request.SessionID` | Resumes an earlier session |
+| `Request.Images` | Images in the prompt, for visual review |
+| `Config.Continues` | Continues a turn that ends without an answer, in the same session |
+| `Config.Trace` | Receives every protocol line, for recording fixtures |
+
 ## Design notes
 
 - **Money is integers** ([ADR 0003](docs/adr/0003-integer-money.md)). Budgets are µ$. Token prices are µ$ per million tokens, which is also picodollars per token, so per-call cost is exact. Rounding happens once, upward, and a meter's per-call charges always sum to its rounded total.
@@ -128,6 +157,7 @@ To run Muse somewhere else, implement `Executor`. agnts runs it with `docker exe
 - **MSP over `exec`** ([ADR 0001](docs/adr/0001-msp-over-exec.md)). Live usage, steering, interrupts and approvals exist only in the session protocol.
 - **The schema is the contract.** `msp/schema_test.go` checks every field of every hand-written type against Muse's own JSON Schema snapshot, and the client warns when a server's schema fingerprint changes.
 - **Real sessions as fixtures.** `testdata/` holds sanitized recordings of real `muse serve` sessions: a fix with 5 metered calls, and a guard veto of `git push`. `msptest` replays them, so engine tests run against Muse's real output without Muse or an account.
+- **Quote-aware guard.** Shell commands are split the way a POSIX shell splits them, honouring quotes, escapes and here-documents, and each stage of a pipeline or sequence is checked: `go vet ./... && git push` is still a push, and `grep "a\|b" x | head` is a read-only pipeline that read-only runs allow.
 - **Nested modules** ([ADR 0004](docs/adr/0004-nested-modules.md)). `pgledger` brings in pgx; the core does not.
 
 ## Quality
@@ -136,7 +166,7 @@ To run Muse somewhere else, implement `Executor`. agnts runs it with `docker exe
 | --- | --- |
 | Tests | Unit, golden (recorded sessions), conformance (`ledgertest`, run against both stores), concurrency, fuzz (`msp`, `money`) |
 | Race detector | All tests pass with `-race`, repeated 10× |
-| Coverage | meter 100%, guard 97%, quote 96%, route 95%, memledger 93%, msp 89%, model 89% |
+| Coverage | meter 100%, guard 94%, quote 96%, route 95%, memledger 93%, msp 89%, model 89% |
 | CI | gofmt, vet, golangci-lint, `-race`, fuzz smoke, govulncheck, Postgres conformance |
 
 **Benchmarks** (Apple M-series, Go 1.25):
@@ -147,6 +177,16 @@ To run Muse somewhere else, implement `Executor`. agnts runs it with `docker exe
 | pgledger hold + commit, 8 parallel, Postgres 18 in Docker | 3.5 ms/op (≈280 runs/s settled per DB; a run makes one hold and a few extends) |
 | MSP notification throughput | ≈100k messages/s per session |
 | Decoding one `session/tokenUsage` | 5 µs |
+
+## Documentation
+
+Architecture decisions are in [`docs/adr/`](docs/adr):
+[0001 MSP over exec](docs/adr/0001-msp-over-exec.md),
+[0002 holds over settlement](docs/adr/0002-holds-over-settlement.md),
+[0003 integer money](docs/adr/0003-integer-money.md),
+[0004 nested modules](docs/adr/0004-nested-modules.md),
+[0005 person in the loop](docs/adr/0005-person-in-the-loop.md).
+`example_test.go` has a runnable `Engine.Run` example (`go doc` shows it).
 
 ## Develop
 
