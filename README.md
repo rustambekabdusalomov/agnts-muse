@@ -12,7 +12,7 @@
 
 Concurrent runs sharing a balance can never push it below zero: not across goroutines, not across servers.
 
-It is the engine behind [agnts](https://github.com/rustambekabdusalomov/agnts) ([agnts.uz](https://agnts.uz)), a self-hosted AI engineer that takes Jira and Plane tickets, codes them in isolated containers, and ships nothing without approval. agnts lets teams pay for AI in local currency with prepaid credits. `agnts-muse` is what makes those credits safe to sell.
+It is the engine behind [agnts](https://github.com/rustambekabdusalomov/agnts) ([agnts.uz](https://agnts.uz)), a self-hosted AI engineer that takes Jira and Plane tickets, codes them in isolated containers, and ships nothing without approval. Both are built and run by one independent developer, so a runaway agent bill is a personal one: agnts gives its users free Muse credits and lets them prepay for more, and `agnts-muse` is what makes it safe to hand out that money.
 
 > **Meta AI developer hackathon, Indie Developer track.** This module is our Muse Code
 > integration; [agnts](https://github.com/rustambekabdusalomov/agnts) is the
@@ -40,7 +40,7 @@ receipt charged $0.047772 · released $0.002228
 
 ## Why
 
-An autonomous agent with an API key is an open-ended bill. Settling after the fact doesn't fix that: ten runs that each see $5 left will each spend $5. Hosted agent products therefore either cap usage crudely (per-day request counts) or absorb the overruns.
+An autonomous agent with an API key is an open-ended bill. Settling after the fact doesn't fix that: ten runs that each see $5 left will each spend $5. Big hosted products can absorb the overruns or cap usage crudely (per-day request counts). An indie developer offering an agent on their own account can do neither: one runaway run is paid out of their pocket.
 
 `agnts-muse` treats model spend like a card payment:
 
